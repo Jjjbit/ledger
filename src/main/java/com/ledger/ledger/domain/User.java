@@ -1,16 +1,16 @@
 package com.ledger.ledger.domain;
 
 import jakarta.persistence.*;
+import org.springframework.security.core.GrantedAuthority;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.core.userdetails.UserDetails;
 
 import java.math.BigDecimal;
-import java.util.ArrayList;
-import java.util.HashMap;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 
 @Entity
 @Table(name = "users")
-public class User {
+public class User implements UserDetails {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -22,16 +22,16 @@ public class User {
     private String password;
 
     @OneToMany(mappedBy = "owner",cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = true)
-    private List<Ledger> ledgers;
+    private List<Ledger> ledgers= new ArrayList<>();
 
     @OneToMany(mappedBy = "owner", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = true)
-    private List<Account> accounts;
+    private List<Account> accounts= new ArrayList<>();
 
     @OneToMany(mappedBy = "owner", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = true)
     public List<Budget> budgets= new ArrayList<>();
 
     @OneToMany(mappedBy = "owner", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = true)
-    public List<BorrowingAndLending> bAndL;
+    public List<BorrowingAndLending> bAndL= new ArrayList<>();
 
     @Column(name = "total_assets", precision = 15, scale = 2, nullable = true)
     public BigDecimal totalAssets;
@@ -46,19 +46,48 @@ public class User {
     public User(String username, String password){
         this.username = username;
         this.password = password;
-        ledgers= new ArrayList<>();
         createLedger("Default Ledger");
-        accounts = new ArrayList<>();
-        bAndL = new ArrayList<>();
         this.totalAssets = getTotalAssets();
         this.totalLiabilities = getTotalLiabilities();
         this.netAssets = getNetAssets();
     }
 
+
+    @Override
+    public Collection<? extends GrantedAuthority> getAuthorities() {
+        return List.of(new SimpleGrantedAuthority("ROLE_USER")); // 或根据你的角色系统返回
+    }
+
+    @Override
+    public String getPassword() {
+        return password;
+    }
+
+    @Override
     public String getUsername() {
         return username;
     }
-    public String getPasswordHash(){return password;}
+
+    @Override
+    public boolean isAccountNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isAccountNonLocked() {
+        return true;
+    }
+
+    @Override
+    public boolean isCredentialsNonExpired() {
+        return true;
+    }
+
+    @Override
+    public boolean isEnabled() {
+        return true;
+    }
+
     public void setUsername(String username) {
         this.username = username;
     }
