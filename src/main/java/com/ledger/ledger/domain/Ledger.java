@@ -46,5 +46,8 @@ public class Ledger {
     public void addLoanRecord(BorrowingAndLending loanRecord) {
         loanRecords.add(loanRecord);
     }
+    public Long getId() {
+        return id;
+    }
 
 }
