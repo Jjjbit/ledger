@@ -20,10 +20,13 @@ public class Ledger {
     private User owner;
 
     @OneToMany(mappedBy = "ledger", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<Transaction> transactions=new ArrayList<>(); //relazione tra Transaction e Ledger è aggregazione
+    private List<Transaction> transactions=new ArrayList<>(); //relazione tra Transaction e Ledger è composizione
 
     @OneToMany(mappedBy = "ledger", cascade = CascadeType.ALL, orphanRemoval = true)
-    private List<BorrowingAndLending> loanRecords = new ArrayList<>(); // relazione tra LoanRecord e Ledger è aggregazione
+    private List<LedgerCategoryComponent> categories = new ArrayList<>();
+
+    @OneToMany(mappedBy = "ledger", cascade = CascadeType.ALL, orphanRemoval = false)
+    private List<BorrowingAndLending> borrowingAndLendings = new ArrayList<>(); // relazione tra LoanRecord e Ledger è aggregazione
 
     @Column(name = "total_income", precision = 15, scale = 2, nullable = false)
     private BigDecimal totalIncome = BigDecimal.ZERO; // Totale entrate del ledger
@@ -36,18 +39,32 @@ public class Ledger {
         this.name = name;
         this.owner = owner;
     }
+
+    public String getName(){return this.name;}
+    public User getOwner(){return this.owner;}
     public void addTransaction(Transaction tx) {
         transactions.add(tx); // Aggiunge una transazione al ledger
         tx.execute();
     }
+    public List<Transaction> getTransactions() {
+        return transactions;
+    }
+    public List<LedgerCategoryComponent> getCategories(){return categories;}
+
     public void removeTransaction(Transaction tx) {
         transactions.remove(tx); // Rimuove una transazione dal ledger
     }
     public void addLoanRecord(BorrowingAndLending loanRecord) {
-        loanRecords.add(loanRecord);
+        borrowingAndLendings.add(loanRecord);
     }
     public Long getId() {
         return id;
+    }
+
+
+    public void addCategory(LedgerCategoryComponent category) {
+        categories.add(category);
+        category.setLedger(this);
     }
 
 }
