@@ -40,11 +40,7 @@ public class LedgerCategory extends LedgerCategoryComponent{
 
     @Override
     public void add(LedgerCategoryComponent child) { // Aggiunge una SubCategory a Category
-        if (this.type == CategoryType.ROOT &&
-                (child.type == CategoryType.INCOME || child.type == CategoryType.EXPENSE)) {
-            children.add(child);
-            child.setParent(this);
-        } else if (this.type != CategoryType.ROOT && child.type == this.type) {
+        if (child.type == this.type) {
             children.add(child);
             child.setParent(this);
         } else {
@@ -81,11 +77,7 @@ public class LedgerCategory extends LedgerCategoryComponent{
 
     @Override
     public LedgerCategoryComponent getParent() {
-        if(this.type== CategoryType.ROOT) {
-            return null;
-        }else{
-            return this.parent;
-        }
+        return this.parent;
     }
     public void display(String indent) {
         System.out.println(indent + "- " + name + " (" + type + ")");
