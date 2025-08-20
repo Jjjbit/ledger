@@ -27,7 +27,7 @@ public class Budget {
 
     @ManyToOne
     @JoinColumn(name = "category_id")
-    private CategoryComponent category; // Category or subcategory
+    private LedgerCategoryComponent category; // Category or subcategory
 
     @ManyToOne
     @JoinColumn(name = "owner_id", nullable = false)
@@ -37,7 +37,7 @@ public class Budget {
     private LocalDate startDate;
 
     public Budget(){}
-    public Budget(BigDecimal amount, Period period, CategoryComponent category, User owner) {
+    public Budget(BigDecimal amount, Period period, LedgerCategoryComponent category, User owner) {
         this.amount = amount;
         this.period = period;
         this.category = category;
@@ -55,7 +55,7 @@ public class Budget {
     public BigDecimal getAmount() {
         return amount;
     }
-    public CategoryComponent getCategory() {
+    public LedgerCategoryComponent getCategory() {
         return category;
     }
     public Period getPeriod() {

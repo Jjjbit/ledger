@@ -31,7 +31,7 @@ public abstract class Transaction {
 
     @ManyToOne
     @JoinColumn(name = "category_id")
-    protected CategoryComponent category;
+    protected LedgerCategoryComponent category;
 
     @Enumerated(EnumType.STRING)
     @Column(name = "transaction_type", nullable = false)
@@ -43,7 +43,7 @@ public abstract class Transaction {
                        String description,
                        Account account,
                        Ledger ledger,
-                       CategoryComponent category,
+                       LedgerCategoryComponent category,
                        TransactionType type) {
         this.date = date != null ? date : LocalDate.now();
         this.amount = amount;
@@ -54,6 +54,10 @@ public abstract class Transaction {
         this.type = type;
     }
     public abstract void execute();
+    public abstract void rollback();
+    public LedgerCategoryComponent getCategory() {
+        return category;
+    }
     public Long getId() {
         return id;
     }
@@ -94,7 +98,7 @@ public abstract class Transaction {
     public void setNote(String note) {
         this.note = note;
     }
-    public void setCategory(CategoryComponent category) {
+    public void setCategory(LedgerCategoryComponent category) {
         this.category = category;
     }
     public void setAccount(Account account) {

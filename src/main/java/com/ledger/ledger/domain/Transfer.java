@@ -33,20 +33,34 @@ public class Transfer extends Transaction{
     }
 
     public void execute() {
-        if (account == null || toAccount == null) {
-            throw new IllegalStateException("Accounts must not be null.");
-        }
         if (account.equals(toAccount)) {
             throw new IllegalArgumentException("Cannot transfer to the same account.");
         }
-        if (amount == null || amount.compareTo(BigDecimal.ZERO) <= 0) {
-            throw new IllegalArgumentException("Amount must be positive.");
-        }
-        if (!account.selectable || !toAccount.selectable || account.hidden || toAccount.hidden) {
-            throw new IllegalStateException("Accounts are not valid for transfer.");
+        if(account==null && toAccount==null){
+            throw new IllegalArgumentException("select account");
+        }else {
+            if (!account.selectable || !toAccount.selectable || account.hidden || toAccount.hidden) {
+                throw new IllegalStateException("Accounts are not valid for transfer.");
+            }
         }
 
         account.debit(amount);
-        toAccount.credit(amount);
+        if(toAccount !=null) {
+            toAccount.credit(amount);
+        }
+        account.getOwner().updateTotalAssets();
+        account.getOwner().updateTotalLiabilities();
+        account.getOwner().updateNetAsset();
+    }
+
+    @Override
+    public void rollback(){
+        account.credit(amount);
+        if(toAccount != null) {
+            toAccount.debit(amount);
+        }
+        account.getOwner().updateTotalAssets();
+        account.getOwner().updateTotalLiabilities();
+        account.getOwner().updateNetAsset();
     }
 }

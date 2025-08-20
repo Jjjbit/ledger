@@ -17,7 +17,7 @@ public class Expense extends Transaction {
                    String description,
                    Account account,
                    Ledger ledger,
-                   CategoryComponent category) {
+                   LedgerCategoryComponent category) {
         super(date, amount, description, account, ledger, category, TransactionType.EXPENSE);
     }
     @Override
@@ -28,7 +28,16 @@ public class Expense extends Transaction {
             }
             account.debit(amount);
         }
-
+        account.getOwner().updateTotalAssets();
+        account.getOwner().updateTotalLiabilities();
+        account.getOwner().updateNetAsset();
+    }
+    @Override
+    public void rollback(){
+        account.credit(amount);
+        account.getOwner().updateTotalAssets();
+        account.getOwner().updateTotalLiabilities();
+        account.getOwner().updateNetAsset();
     }
 
 }
