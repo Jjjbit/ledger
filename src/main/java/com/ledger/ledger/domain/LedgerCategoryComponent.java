@@ -22,7 +22,7 @@ public abstract class LedgerCategoryComponent {
     @Column(length = 20, nullable = false)
     protected CategoryType type; //"income", "expense", "root"
 
-    @OneToMany(mappedBy = "category", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "category", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = false)
     protected List<Transaction> transactions = new ArrayList<>(); //un category -> più transazioni.
 
     @OneToMany(mappedBy = "category", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -33,13 +33,14 @@ public abstract class LedgerCategoryComponent {
     protected LedgerCategoryComponent parent;
 
     @ManyToOne
-    @JoinColumn(name = "ledger_id")
-    private Ledger ledger;
+    @JoinColumn(name = "ledger_id", nullable = false)
+    protected Ledger ledger;
 
     public LedgerCategoryComponent() {}
-    public LedgerCategoryComponent(String name, CategoryType type) {
+    public LedgerCategoryComponent(String name, CategoryType type, Ledger ledger) {
         this.name = name;
         this.type = type;
+        this.ledger=ledger;
     }
 
     public abstract void remove(LedgerCategoryComponent child);
@@ -54,6 +55,7 @@ public abstract class LedgerCategoryComponent {
     }
     public void setLedger (Ledger ledger){this.ledger=ledger;}
     public void setName(String name){this.name=name;}
+    public void setType(CategoryType type){this.type=type;}
     public String getName() {
         return name;
     }
@@ -63,7 +65,8 @@ public abstract class LedgerCategoryComponent {
     public Long getId() {
         return id;
     }
-    //public abstract void changeLevel(CategoryComponent root);
+    public List<Budget> getBudgets(){return this.budgets;}
+    public Ledger getLedger(){return this.ledger;}
 
     public void addTransaction(Transaction t) {
         transactions.add(t);
