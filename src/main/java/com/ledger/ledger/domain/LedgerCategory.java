@@ -14,17 +14,17 @@ import java.util.stream.Collectors;
 @DiscriminatorValue("Category")
 public class LedgerCategory extends LedgerCategoryComponent{
 
-    @OneToMany(mappedBy = "parent", cascade = CascadeType.ALL, orphanRemoval = true)
+    @OneToMany(mappedBy = "parent", cascade = {CascadeType.PERSIST, CascadeType.MERGE, CascadeType.REMOVE}, orphanRemoval = true)
     private List<LedgerCategoryComponent> children = new ArrayList<>();
 
     public LedgerCategory() {}
-    public LedgerCategory(String name, CategoryType type) {
-        super(name, type);
+    public LedgerCategory(String name, CategoryType type, Ledger ledger) {
+        super(name, type, ledger);
     }
 
     public void changeLevel(LedgerCategoryComponent root, LedgerCategoryComponent parent) {
         if (this instanceof LedgerCategory && this.getChildren().isEmpty()) {
-            LedgerSubCategory sub = new LedgerSubCategory(this.name, this.type);
+            LedgerSubCategory sub = new LedgerSubCategory(this.name, this.type, this.ledger);
             sub.transactions.addAll(this.getTransactions()); // Copia le transazioni dalla categoria alla subcategoria
             parent.add(sub);
             root.remove(this);
@@ -43,6 +43,7 @@ public class LedgerCategory extends LedgerCategoryComponent{
         if (child.type == this.type) {
             children.add(child);
             child.setParent(this);
+
         } else {
             throw new IllegalArgumentException("Invalid category hierarchy");
         }
