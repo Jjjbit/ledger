@@ -36,37 +36,12 @@ public class SubCategory extends CategoryComponent {
         System.out.println(indent + "- " + name + " (" + type + ")");
     }
 
-    @Override
-    @Transient
-    public List<Transaction> getTransactions() {
-        return transactions.stream()
-                .sorted(Comparator.comparing(Transaction::getDate).reversed())
-                .collect(Collectors.toList());
-    }
-
-    @Override
-    public void printTransactionSummary() {
-        this.transactions= getTransactions();
-        System.out.println("Transaction summary for: " + name);
-        for (Transaction t : transactions) {
-            System.out.println(t.getDate() + " - " + t.getAccount() + "-" + t.getAmount() + " - " + t.getNote());
-        }
-    }
-
-    public void changeLevel(CategoryComponent root) {
-        if( this.getParent() != null) {
-            this.getParent().remove(this);
-            root.add(this);
-        }
-
-    }
 
     public void changeParent(CategoryComponent newParent) {
-        if (this.parent != null) {
-            this.parent.remove(this); // Rimuove se già ha un parent
-        }
+        this.getParent().getChildren().remove(this); // Rimuove se già ha un parent
         newParent.add(this); // Aggiunge al nuovo parent
         this.parent = newParent; // Imposta il nuovo parent
     }
+
 
 }
