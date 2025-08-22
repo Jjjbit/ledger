@@ -10,7 +10,13 @@ import java.util.*;
 
 @Entity
 @Table(name = "users")
-public class User implements UserDetails {
+public class User {
+
+    public enum Role {
+        USER,
+        ADMIN
+    }
+
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
     private Long id;
@@ -20,6 +26,10 @@ public class User implements UserDetails {
 
     @Column(nullable = false)
     private String password;
+
+    @Enumerated(EnumType.STRING)
+    @Column(nullable = false)
+    private Role role;
 
     @OneToMany(mappedBy = "owner",cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = true)
     private List<Ledger> ledgers= new ArrayList<>();
@@ -43,49 +53,24 @@ public class User implements UserDetails {
     public BigDecimal netAssets;
 
     public User (){}
-    public User(String username, String password){
+    public User(String username, String password, Role role){
         this.username = username;
         this.password = password;
-        createLedger("Default Ledger");
-        this.totalAssets = getTotalAssets();
-        this.totalLiabilities = getTotalLiabilities();
-        this.netAssets = getNetAssets();
+        this.role = role;
+        if (role == Role.USER) {
+            createLedger("Default Ledger");
+        }
+        this.totalAssets = calculateTotalAssets();
+        this.totalLiabilities = calculateTotalLiabilities();
+        this.netAssets = calculateNetAssets();
     }
 
-
-    @Override
-    public Collection<? extends GrantedAuthority> getAuthorities() {
-        return List.of(new SimpleGrantedAuthority("ROLE_USER")); // 或根据你的角色系统返回
+    public boolean isAdmin() {
+        return this.role == Role.ADMIN;
     }
 
-    @Override
-    public String getPassword() {
-        return password;
-    }
-
-    @Override
-    public String getUsername() {
-        return username;
-    }
-
-    @Override
-    public boolean isAccountNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isAccountNonLocked() {
-        return true;
-    }
-
-    @Override
-    public boolean isCredentialsNonExpired() {
-        return true;
-    }
-
-    @Override
-    public boolean isEnabled() {
-        return true;
+    public boolean isRegularUser() {
+        return this.role == Role.USER;
     }
 
     public void setUsername(String username) {
@@ -113,29 +98,73 @@ public class User implements UserDetails {
     public List<Budget> getBudgets() {
         return budgets;
     }
-    public void setBudget(BigDecimal amount, Budget.Period p, CategoryComponent c) {
+    public Role getRole(){return role;}
+    public String getPassword(){return password;}
+    public String getUsername(){return username;}
+    public void setBudget(BigDecimal amount, Budget.Period p, LedgerCategoryComponent c) {
         budgets.add(new Budget(amount, p, c,this));
     }
-    public void deleteAccount(Account account) {
+    public void setTotalAssets(BigDecimal totalAssets) {
+        this.totalAssets = totalAssets;
+    }
+    public void setTotalLiabilities(BigDecimal totalLiabilities) {
+        this.totalLiabilities = totalLiabilities;
+    }
+    public void setNetAssets(BigDecimal netAssets) {
+        this.netAssets = netAssets;
+    }
+    public void deleteAccount(Account account, boolean deleteTransactions) {
+        if (deleteTransactions) {
+            account.getTransactions().forEach(transaction -> {
+                transaction.setAccount(null);
+                transaction.setLedger(null);
+                transaction.setCategory(null);
+                this.setTotalAssets(
+                        this.calculateTotalAssets().subtract(account.getBalance()));
+            });
+            account.getTransactions().clear();
+        } else {
+            this.setTotalAssets(
+                    this.calculateTotalAssets().subtract(account.getBalance())
+                            .add(account.getTransactions().stream()
+                                    .filter(tx -> tx.getType() == TransactionType.INCOME)
+                                    .map(Transaction::getAmount)
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add))
+                            .subtract(account.getTransactions().stream()
+                                    .filter(tx -> tx.getType() == TransactionType.EXPENSE)
+                                    .map(Transaction::getAmount)
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add))
+                            .subtract(account.getTransactions().stream()
+                                    .filter(tx -> tx instanceof Transfer)
+                                    .filter(tx -> ((Transfer) tx).getToAccount().equals(account))
+                                    .map(Transaction::getAmount)
+                                    .reduce(BigDecimal.ZERO, BigDecimal::add))
+            );
+        }
         accounts.remove(account);
-        this.totalAssets = getTotalAssets();
-        this.totalLiabilities = getTotalLiabilities();
-        this.netAssets = getNetAssets();
-
     }
 
     public void addAccount(Account account) {
         accounts.add(account);
         account.setOwner(this);
-        this.totalAssets = getTotalAssets();
-        this.totalLiabilities = getTotalLiabilities();
-        this.netAssets = getNetAssets();
+        this.totalAssets = calculateTotalAssets();
+        this.totalLiabilities = calculateTotalLiabilities();
+        this.netAssets = calculateNetAssets();
     }
     public void addBorrowingAndLending(BorrowingAndLending record) {
         bAndL.add(record);
     }
+    public BigDecimal getTotalLiabilities() {
+        return totalLiabilities;
+    }
+    public BigDecimal getTotalAssets() {
+        return totalAssets;
+    }
+    public BigDecimal getNetAssets() {
+        return netAssets;
+    }
 
-    public BigDecimal getTotalLending(){
+    public BigDecimal calculateTotalLending(){
         return bAndL.stream()
                 .filter(record -> !record.isIncoming())
                 .filter(record -> record.includedInNetWorth)
@@ -144,7 +173,7 @@ public class User implements UserDetails {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    public BigDecimal getTotalBorrowing() {
+    public BigDecimal calculateTotalBorrowing() {
         return bAndL.stream()
                 .filter(BorrowingAndLending::isIncoming)
                 .filter(record -> record.includedInNetWorth)
@@ -153,20 +182,20 @@ public class User implements UserDetails {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    public BigDecimal getTotalAssets() {
+    public BigDecimal calculateTotalAssets() {
         BigDecimal totalBalance = accounts.stream()
                 .filter(account -> !account.getType().equals(AccountType.LOAN))
                 .filter(account -> account.includedInNetAsset && !account.hidden)
                 .map(Account::getBalance)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        return totalBalance.add(getTotalLending());
+        return totalBalance.add(calculateTotalLending());
     }
 
-    public BigDecimal getNetAssets() {
-        return getTotalAssets().subtract(getTotalLiabilities());
+    public BigDecimal calculateNetAssets() {
+        return calculateTotalAssets().subtract(calculateTotalLiabilities()).add(calculateTotalLending());
     }
-    public BigDecimal getTotalLiabilities() {
+    public BigDecimal calculateTotalLiabilities() {
         BigDecimal totalCreditDebt = accounts.stream()
                 .filter(account -> account.getCategory() == AccountCategory.CREDIT)
                 .filter(account -> account instanceof CreditAccount)
@@ -181,21 +210,21 @@ public class User implements UserDetails {
                 .map(account -> ((LoanAccount) account).getRemainingAmount())
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
 
-        return totalCreditDebt.add(getTotalBorrowing()).add(totalUnpaidLoan);
+        return totalCreditDebt.add(calculateTotalBorrowing()).add(totalUnpaidLoan);
     }
     public void updateNetAssetsAndLiabilities(BigDecimal amount) {
-        this.totalLiabilities = getTotalLiabilities().subtract(amount);
+        this.totalLiabilities = calculateTotalLiabilities().subtract(amount);
         //this.netAssets = this.netAssets.add(amount);
-        this.netAssets = getTotalAssets().subtract(this.totalLiabilities);
+        this.netAssets = calculateTotalAssets().subtract(this.totalLiabilities);
     }
     public void updateNetAsset(){
-        this.netAssets= getNetAssets();
+        this.netAssets= calculateNetAssets();
     }
     public void updateTotalAssets(){
-        this.totalAssets = getTotalAssets();
+        this.totalAssets = calculateTotalAssets();
     }
     public void updateTotalLiabilities(){
-        this.totalLiabilities = getTotalLiabilities();
+        this.totalLiabilities = calculateTotalLiabilities();
     }
 }
 
