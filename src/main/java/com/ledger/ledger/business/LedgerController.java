@@ -38,12 +38,13 @@ public class LedgerController {
         Ledger ledger=new Ledger(name, owner);
         ledgerRepository.save(ledger);
 
-        List<CategoryComponent> templateCategories = categoryComponentRepository.findAll(); //allexpense, allincome
+        //List<CategoryComponent> templateCategories = categoryComponentRepository.findAll();
+        List<Category> rootCategories = categoryComponentRepository.findByParentIsNull();
 
         //copia albero di categorycomponent dal database a ledger
-        for (CategoryComponent template : templateCategories) {
+        for (Category template : rootCategories) {
             LedgerCategoryComponent ledgerCategoryComponent= copyCategoryComponent(template, ledger);
-            ledger.addCategory(ledgerCategoryComponent);
+            ledger.addCategoryComponent(ledgerCategoryComponent);
         }
         return ResponseEntity.ok("ledger created successfully");
     }
@@ -55,12 +56,15 @@ public class LedgerController {
 
             LedgerCategory ledgerCategory = new LedgerCategory();
             ledgerCategory.setName(template.getName());
+            ledgerCategory.setType(template.getType());
             ledgerCategory.setLedger(ledger);
 
             for (CategoryComponent templateSub : template.getChildren()) {
                 LedgerCategoryComponent childCopy = copyCategoryComponent(templateSub, ledger);
-                childCopy.setParent(ledgerCategory);
-                ledgerCategory.getChildren().add(childCopy);
+                ledgerCategory.add(childCopy);
+
+                //childCopy.setParent(ledgerCategory);
+                //ledgerCategory.getChildren().add(childCopy);
             }
             copy = ledgerCategory; //returns category and its subcategories
 
@@ -69,6 +73,8 @@ public class LedgerController {
             LedgerSubCategory ledgerSub = new LedgerSubCategory();
             ledgerSub.setName(template.getName());
             ledgerSub.setLedger(ledger);
+            ledgerSub.setType(template.getType());
+            ledger.addCategoryComponent(ledgerSub);
             copy = ledgerSub; //returns subcategory
         }
 
@@ -111,9 +117,9 @@ public class LedgerController {
 
         Ledger newLedger=new Ledger(ledger.getName()+ " Copy", ledger.getOwner());
 
-        for (LedgerCategoryComponent oldCategory : ledger.getCategories()) {
+        for (LedgerCategoryComponent oldCategory : ledger.getCategoryComponents()) {
             LedgerCategoryComponent newCategory = copyLedgerCategory(oldCategory, newLedger);
-            newLedger.addCategory(newCategory);
+            newLedger.addCategoryComponent(newCategory);
         }
 
         ledgerRepository.save(newLedger);
