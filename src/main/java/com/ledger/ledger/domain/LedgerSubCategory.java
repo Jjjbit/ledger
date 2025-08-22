@@ -13,8 +13,8 @@ import java.util.stream.Collectors;
 public class LedgerSubCategory extends LedgerCategoryComponent{
 
     public LedgerSubCategory() {}
-    public LedgerSubCategory(String name, CategoryType type) {
-        super(name, type);
+    public LedgerSubCategory(String name, CategoryType type, Ledger ledger) {
+        super(name, type, ledger);
     }
 
     @Override
