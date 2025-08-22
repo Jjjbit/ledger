@@ -6,5 +6,6 @@ import org.springframework.stereotype.Repository;
 
 @Repository
 public interface LedgerRepository extends JpaRepository<Ledger, Long> {
+    Ledger findByName(String name);
 
 }
