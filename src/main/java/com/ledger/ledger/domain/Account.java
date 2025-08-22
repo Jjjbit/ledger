@@ -90,9 +90,11 @@ public abstract class Account {
     }
     public void addTransaction(Transaction transaction) {
         transactions.add(transaction);
+        transaction.execute();
     }
     public void removeTransaction(Transaction transaction) {
         transactions.remove(transaction);
+        transaction.rollback();
     }
 
     public void setIncludedInNetAsset(boolean includedInNetAsset) {
