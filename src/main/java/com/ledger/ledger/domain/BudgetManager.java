@@ -27,7 +27,7 @@ public class BudgetManager {
     }
 
     //total budget for a user for a specific period and category
-    public BigDecimal getCategoryBudgets(User user, Budget.Period period, CategoryComponent category) {
+    public BigDecimal getCategoryBudgets(User user, Budget.Period period, LedgerCategoryComponent category) {
         return budgets.stream()
                 .filter(b -> b.getOwner().equals(user))
                 .filter(b -> category.equals(b.getCategory()))
@@ -38,7 +38,7 @@ public class BudgetManager {
     }
 
     //total spending for a user for a specific period and category
-    public BigDecimal getCategorySpending(User user, Budget.Period period, CategoryComponent category) {
+    public BigDecimal getCategorySpending(User user, Budget.Period period, LedgerCategoryComponent category) {
         /*List<Transaction> transactions = category.getTransactions().stream()
                 .filter(t -> budgets.stream()
                         .anyMatch(b -> b.getOwner().equals(user) && b.getCategory().equals(category) && b.isTransactionInPeriod(t, period)))
@@ -69,7 +69,7 @@ public class BudgetManager {
     }
 
     // Check if the user is over budget for a specific period and category
-    public boolean isOverBudgetForCategory(User user, Budget.Period period, CategoryComponent category) {
+    public boolean isOverBudgetForCategory(User user, Budget.Period period, LedgerCategoryComponent category) {
         BigDecimal budgetAmount = getCategoryBudgets(user, period, category);
         BigDecimal spending = getCategorySpending(user, period, category);
         return spending.compareTo(budgetAmount) > 0;
