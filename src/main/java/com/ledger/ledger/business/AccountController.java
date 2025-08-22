@@ -2,9 +2,11 @@ package com.ledger.ledger.business;
 
 import com.ledger.ledger.domain.*;
 import com.ledger.ledger.repository.AccountRepository;
+import com.ledger.ledger.repository.InstallmentPlanRepository;
 import com.ledger.ledger.repository.TransactionRepository;
 import com.ledger.ledger.repository.UserRepository;
 
+import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -12,12 +14,11 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
-import jakarta.persistence.EntityManager;
 
 import java.math.BigDecimal;
 
 import java.security.Principal;
-import java.time.MonthDay;
+import java.time.LocalDate;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
@@ -34,8 +35,9 @@ public class AccountController {
 
     @Autowired
     private TransactionRepository transactionRepository;
+
     @Autowired
-    private EntityManager entityManager;
+    private InstallmentPlanRepository installmentPlanRepository;
 
     @PostMapping("/create-basic-account")
     @Transactional
@@ -43,7 +45,7 @@ public class AccountController {
     public ResponseEntity<String> createBasicAccount(@RequestParam String accountName,
                                                      @RequestParam BigDecimal balance,
                                                      Principal principal,
-                                                     @RequestParam String note,
+                                                     @RequestParam (required = false) String note,
                                                      @RequestParam boolean includedInNetWorth,
                                                      @RequestParam boolean selectable,
                                                      @RequestParam AccountType type,
@@ -71,13 +73,13 @@ public class AccountController {
     public ResponseEntity<String> createCreditAccount(@RequestParam String accountName,
                                                       @RequestParam BigDecimal balance,
                                                       Principal principal,
-                                                      @RequestParam String note,
+                                                      @RequestParam (required = false) String note,
                                                       @RequestParam boolean includedInNetWorth,
                                                       @RequestParam boolean selectable,
                                                       @RequestParam BigDecimal creditLimit,
-                                                      @RequestParam BigDecimal currentDebt,
-                                                      @RequestParam MonthDay billDate,
-                                                      @RequestParam MonthDay dueDate,
+                                                      @RequestParam (required = false) BigDecimal currentDebt,
+                                                      @RequestParam (required = false) Integer billDate,
+                                                      @RequestParam (required = false) Integer dueDate,
                                                       @RequestParam AccountType type) {
         User user = userRepository.findByUsername(principal.getName());
         if (user == null) {
@@ -103,22 +105,27 @@ public class AccountController {
     @Transactional
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> createLoanAccount(@RequestParam String accountName,
-                                                    @RequestParam String note,
+                                                    @RequestParam (required = false) String note,
                                                     @RequestParam boolean includedInNetAsset,
                                                     Principal principal,
                                                     @RequestParam int totalPeriods,
                                                     @RequestParam int repaidPeriods,
                                                     @RequestParam BigDecimal annualInterestRate,
                                                     @RequestParam BigDecimal loanAmount,
-                                                    @RequestParam Long receivingAccountId,
-                                                    @RequestParam MonthDay repaymentDate,
-                                                    @RequestParam LoanAccount.RepaymentType repaymentType) {
+                                                    @RequestParam (required = false) Long receivingAccountId,
+                                                    @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate repaymentDate,
+                                                    @RequestParam (required = false) LoanAccount.RepaymentType repaymentType) {
         User owner = userRepository.findByUsername(principal.getName());
         if (owner == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
         }
-        Account receivingAccount = accountRepository.findById(receivingAccountId)
-                .orElseThrow(() -> new IllegalArgumentException("Receiving account not found"));
+
+        Account receivingAccount =null;
+        if(receivingAccountId != null) {
+             receivingAccount = accountRepository.findById(receivingAccountId)
+                    .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+        }
+
         LoanAccount account = new LoanAccount(
                 accountName,
                 owner,
@@ -132,7 +139,6 @@ public class AccountController {
                 repaymentDate,
                 repaymentType);
         accountRepository.save(account);
-        userRepository.save(owner);
         return ResponseEntity.ok("Loan account created successfully");
     }
 
@@ -147,8 +153,8 @@ public class AccountController {
     @Transactional
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> deleteAccount(@PathVariable Long id,
-                              @RequestParam boolean deleteTransactions,
-                              Principal principal) {
+                                                @RequestParam boolean deleteTransactions,
+                                                Principal principal) {
         User user = userRepository.findByUsername(principal.getName());
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
@@ -160,18 +166,40 @@ public class AccountController {
         if (!account.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("You cannot delete someone else's account");
         }
-        if (deleteTransactions) {
-            // Delete all transactions associated with the account
+        if (deleteTransactions) {// Delete all transactions associated with the account
             List<Transaction> transactionsToDelete = new ArrayList<>(account.getTransactions());
             for (Transaction transaction : transactionsToDelete) {
+                transaction.getAccount().getTransactions().remove(transaction);
                 transaction.setAccount(null);
+
+                transaction.getLedger().getTransactions().remove(transaction);
                 transaction.setLedger(null);
+
+                transaction.getCategory().getTransactions().remove(transaction);
                 transaction.setCategory(null);
+
                 transactionRepository.save(transaction);
                 transactionRepository.delete(transaction);
-                user.setTotalAssets(
-                        user.calculateTotalAssets().subtract(account.getBalance())
-                );
+
+                if(account instanceof BasicAccount) {
+                    user.setTotalAssets(
+                            user.calculateTotalAssets().subtract(account.getBalance())
+                    );
+                    user.setNetAssets(user.getTotalAssets().subtract(user.getTotalLiabilities()));
+                }else if(account instanceof CreditAccount){
+                    user.setTotalAssets(
+                            user.calculateTotalAssets().subtract(account.getBalance())
+                    );
+                    user.setTotalLiabilities(
+                            user.calculateTotalLiabilities().subtract(((CreditAccount) account).getCurrentDebt())
+                    );
+                    user.setNetAssets(user.getTotalAssets().subtract(user.getTotalLiabilities()));
+                }else{
+                    user.setTotalLiabilities(
+                            user.calculateTotalLiabilities().subtract(((LoanAccount) account).getRemainingAmount())
+                    );
+                    user.setNetAssets(user.getTotalAssets().subtract(user.getTotalLiabilities()));
+                }
             }
             account.getTransactions().clear();
             accountRepository.delete(account);
@@ -230,42 +258,64 @@ public class AccountController {
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> editBasicAccount(@PathVariable Long id,
                                               Principal principal,
-                                              @RequestParam String name,
-                                              @RequestParam BigDecimal balance,
-                                              @RequestParam String notes,
-                                              @RequestParam boolean includedInNetAsset,
-                                              @RequestParam boolean selectable) {
+                                              @RequestParam (required = false) String name,
+                                              @RequestParam (required = false) BigDecimal balance,
+                                              @RequestParam (required = false) String notes,
+                                              @RequestParam (required = false) Boolean includedInNetAsset,
+                                              @RequestParam (required = false) Boolean selectable) {
         User user = userRepository.findByUsername(principal.getName());
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
         }
+
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         if (!account.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("You cannot edit someone else's account");
         }
-        account.setName(name);
-        account.setBalance(balance);
-        account.setNotes(notes);
-        account.setIncludedInNetAsset(includedInNetAsset);
-        account.setSelectable(selectable);
-        accountRepository.save(account);
+
+        if (!(account instanceof BasicAccount)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Account is not a basic account");
+        }
+
+        BasicAccount basicAccount = (BasicAccount) account;
+        if(name!=null) {
+            basicAccount.setName(name);
+        }
+        if(balance !=null){
+            basicAccount.setBalance(balance);
+        }
+        basicAccount.setNotes(notes);
+
+        if(includedInNetAsset != null){
+            basicAccount.setIncludedInNetAsset(includedInNetAsset);
+        }
+
+        if(selectable !=null){
+            basicAccount.setSelectable(selectable);
+        }
+
+        accountRepository.save(basicAccount);
+        basicAccount.getOwner().updateTotalAssets();
+        basicAccount.getOwner().updateNetAsset();
+        userRepository.save(basicAccount.getOwner());
         return ResponseEntity.ok("Account edited successfully");
     }
+
     @PutMapping("/{id}/edit-credit-account")
     @Transactional
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> editCreditAccount(@PathVariable Long id,
                                               Principal principal,
-                                              @RequestParam String name,
-                                              @RequestParam BigDecimal balance,
-                                              @RequestParam String notes,
-                                              @RequestParam boolean includedInNetAsset,
-                                              @RequestParam boolean selectable,
-                                              @RequestParam BigDecimal creditLimit,
-                                              @RequestParam BigDecimal currentDebt,
-                                              @RequestParam MonthDay billDate,
-                                              @RequestParam MonthDay dueDate) {
+                                              @RequestParam (required = false) String name,
+                                              @RequestParam (required = false) BigDecimal balance,
+                                              @RequestParam (required = false) String notes,
+                                              @RequestParam (required = false) Boolean includedInNetAsset,
+                                              @RequestParam (required = false) Boolean selectable,
+                                              @RequestParam (required = false) BigDecimal creditLimit,
+                                              @RequestParam (required = false) BigDecimal currentDebt,
+                                              @RequestParam (required = false) Integer billDate,
+                                              @RequestParam (required = false) Integer dueDate) {
         User user = userRepository.findByUsername(principal.getName());
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
@@ -279,82 +329,212 @@ public class AccountController {
             return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Account is not a credit account");
         }
         CreditAccount creditAccount = (CreditAccount) account;
-        creditAccount.setName(name);
-        creditAccount.setBalance(balance);
+
+        if(name != null){
+            creditAccount.setName(name);
+        }
+        if(balance != null){
+            creditAccount.setBalance(balance);
+        }
         creditAccount.setNotes(notes);
-        creditAccount.setIncludedInNetAsset(includedInNetAsset);
-        creditAccount.setSelectable(selectable);
-        creditAccount.setCreditLimit(creditLimit);
-        creditAccount.setCurrentDebt(currentDebt);
-        creditAccount.setBillDate(billDate);
-        creditAccount.setDueDate(dueDate);
+        if(includedInNetAsset != null){
+            creditAccount.setIncludedInNetAsset(includedInNetAsset);
+        }
+        if(selectable != null){
+            creditAccount.setSelectable(selectable);
+        }
+        if(creditLimit != null){
+            creditAccount.setCreditLimit(creditLimit);
+        }
+        if(currentDebt != null){
+            creditAccount.setCurrentDebt(currentDebt);
+        }
+        if(billDate != null){
+            creditAccount.setBillDay(billDate);
+        }
+        if (dueDate != null){
+            creditAccount.setDueDay(dueDate);
+        }
         accountRepository.save(creditAccount);
+        creditAccount.getOwner().updateTotalAssets();
+        creditAccount.getOwner().updateTotalLiabilities();
+        creditAccount.getOwner().updateNetAsset();
+        userRepository.save(creditAccount.getOwner());
         return ResponseEntity.ok("Credit account edited successfully");
     }
 
-
-
-
-    @PutMapping("/{id}/includeInNetAsset")
+    @PutMapping("/{id}/edit-loan-account")
     @Transactional
-    public void setIncludedInNetAsset(@PathVariable Long id,
-                                      @RequestParam boolean included) {
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> editLoanAccount(@PathVariable Long id,
+                                                  Principal principal,
+                                                  @RequestParam (required = false) String name,
+                                                  @RequestParam (required = false) String notes,
+                                                  @RequestParam (required = false) Boolean includedInNetAsset,
+                                                  @RequestParam (required = false) Integer totalPeriods,
+                                                  @RequestParam (required = false) Integer repaidPeriods,
+                                                  @RequestParam (required = false) BigDecimal annualInterestRate,
+                                                  @RequestParam (required = false) BigDecimal loanAmount,
+                                                  @RequestParam (required = false) @DateTimeFormat(iso = DateTimeFormat.ISO.DATE) LocalDate repaymentDate,
+                                                  @RequestParam (required = false) LoanAccount.RepaymentType repaymentType) {
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        account.setIncludedInNetAsset(included);
-        accountRepository.save(account);
-        userRepository.save(account.getOwner());
+        if (!account.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("You cannot edit someone else's account");
+        }
+        if (!(account instanceof LoanAccount)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Account is not a loan account");
+        }
+        LoanAccount loanAccount = (LoanAccount) account;
+        if(name != null){loanAccount.setName(name);}
+        loanAccount.setNotes(notes);
+        if(includedInNetAsset != null){loanAccount.setIncludedInNetAsset(includedInNetAsset);}
+        if(totalPeriods != null){loanAccount.setTotalPeriods(totalPeriods);}
+        if(repaidPeriods != null){loanAccount.setRepaidPeriods(repaidPeriods);}
+        if(annualInterestRate != null){loanAccount.setAnnualInterestRate(annualInterestRate);}
+        if(loanAmount != null){loanAccount.setLoanAmount(loanAmount);}
+        if(repaymentDate != null) {loanAccount.setRepaymentDate(repaymentDate);}
+        if(repaymentType != null){loanAccount.setRepaymentType(repaymentType);}
+        accountRepository.save(loanAccount);
+        loanAccount.getOwner().updateTotalAssets();
+        loanAccount.getOwner().updateTotalLiabilities();
+        loanAccount.getOwner().updateNetAsset();
+        userRepository.save(loanAccount.getOwner());
+        return ResponseEntity.ok("Loan account edited successfully");
     }
 
-    @PutMapping("/{id}/selectable")
-    public void setSelectable(@PathVariable Long id,
-                              @RequestParam boolean selectable) {
-        Account account = accountRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        account.setSelectable(selectable);
-        accountRepository.save(account);
-    }
 
     @PutMapping("/{id}/credit")
     @Transactional
-    public void creditAccount(@PathVariable Long id,
-                              @RequestParam BigDecimal amount) {
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> creditAccount(@PathVariable Long id,
+                                                @RequestParam BigDecimal amount,
+                                                Principal principal) {
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+        if (!account.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("You cannot credit someone else's account");
+        }
         account.credit(amount);
         accountRepository.save(account);
-        userRepository.save(account.getOwner());
+        return ResponseEntity.ok("credit account");
     }
 
     @PutMapping("/{id}/debit")
     @Transactional
-    public void debitAccount(@PathVariable Long id,
-                             @RequestParam BigDecimal amount) {
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> debitAccount(@PathVariable Long id,
+                                               @RequestParam BigDecimal amount,
+                                               Principal principal) {
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+        if (!account.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("You cannot debit someone else's account");
+        }
         account.debit(amount);
         accountRepository.save(account);
-        userRepository.save(account.getOwner());
+        return ResponseEntity.ok("debit account");
     }
 
-    // Change account details
-    @PutMapping("{id}/update")
+    //CreditAccount
+    @PutMapping("{id}/repay-debt")
     @Transactional
-    public void updateAccount(@PathVariable Long id,
-                              @RequestBody Account updatedAccount) {
-        Account account = accountRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Account not found"));
-        account.setName(updatedAccount.getName());
-        account.setBalance(updatedAccount.getBalance());
-        account.setNotes(updatedAccount.getNotes());
-        account.setIncludedInNetAsset(updatedAccount.getIncludedInNetAsset());
-        account.setSelectable(updatedAccount.getSelectable());
-        accountRepository.save(account);
-        userRepository.save(account.getOwner());
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> repayDebt(@PathVariable Long id,
+                                            @RequestParam BigDecimal amount,
+                                            @RequestParam(required = false) Long fromAccountId,
+                                            Principal principal) {
+
+        CreditAccount creditAccount = (CreditAccount) accountRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Credit account not found"));
+        Account fromAccount = (fromAccountId != null) ? accountRepository.findById(fromAccountId)
+                .orElse(null) : null;
+
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+        if (!creditAccount.getOwner().getId().equals(user.getId()) || !fromAccount.getOwner().getId().equals(user.getId())) {
+            throw new AccessDeniedException("You cannot repay debt");
+        }
+
+        creditAccount.repayDebt(amount, fromAccount);
+        accountRepository.save(creditAccount);
+        if (fromAccount != null) {
+            accountRepository.save(fromAccount);
+        }
+        return ResponseEntity.ok("Debt repaid successfully");
     }
+
+    @PutMapping("{id}/repay-installment-plan")
+    @Transactional
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> repayInstallmentPlan(@PathVariable Long id,
+                                                       @RequestParam Long installmentPlanId, Principal principal) {
+
+        CreditAccount account = (CreditAccount) accountRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+        InstallmentPlan installmentPlan = installmentPlanRepository.findById(installmentPlanId)
+                .orElseThrow(() -> new IllegalArgumentException("Installment plan not found"));
+
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+        if (!account.getOwner().getId().equals(user.getId()) || !account.getInstallmentPlans().contains(installmentPlan)) {
+            throw new AccessDeniedException("You cannot repay installment");
+        }
+
+        account.repayInstallmentPlan(installmentPlan);
+        accountRepository.save(account);
+        installmentPlanRepository.save(installmentPlan);
+        return ResponseEntity.ok("Installment plan repaid successfully");
+    }
+
+    //LoanAccount
+    @PutMapping("{id}/repay-loan")
+    @Transactional
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> repayLoan(@PathVariable Long id,
+                                            @RequestParam(required = false) Long fromAccountId,
+                                            Principal principal) {
+        LoanAccount loanAccount = (LoanAccount) accountRepository.findById(id).orElse(null);
+        if (loanAccount == null) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Loan account not found");
+        }
+
+        Account fromAccount = (fromAccountId != null) ? accountRepository.findById(fromAccountId).orElse(null) : null;
+
+        User owner = userRepository.findByUsername(principal.getName());
+        if (owner == null || !loanAccount.getOwner().equals(owner) || !fromAccount.getOwner().equals(owner)) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized access");
+        }
+
+        loanAccount.repayLoan(fromAccount);
+        accountRepository.save(loanAccount);
+        if (fromAccount != null) {
+            accountRepository.save(fromAccount);
+        }
+        return ResponseEntity.ok("Loan repaid successfully");
+    }
+
+
 
     @GetMapping("{id}/get-transacitons-for-month")
-    public List<Transaction> getAccountTransactionsForMonth(@PathVariable Long id, @RequestParam YearMonth month) {
+    public List<Transaction> getAccountTransactionsForMonth(@PathVariable Long id,
+                                                            @RequestParam YearMonth month) {
         Account account = accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         return account.getTransactionsForMonth(month);
