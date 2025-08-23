@@ -465,7 +465,7 @@ public class LedgerCategoryComponentTest {
         Assertions.assertEquals(1, updateMealsCategory.getChildren().size());
         Assertions.assertEquals(1, updateMealsCategory.getTransactions().size());
     }
-    //TODO: demote error con figli
+
     @Test
     @WithMockUser(username = "Alice")
     public void testDemoteWithChildren() throws Exception{
@@ -491,6 +491,12 @@ public class LedgerCategoryComponentTest {
         accountRepository.save(testAccount);
         ledgerRepository.save(testLedger1);
         ledgerCategoryComponentRepository.save(foodCategory);
+
+        mockMvc.perform(put("/ledger-category-components/"+ foodCategory.getId() +"/demote")
+                        .principal(() -> "Alice")
+                        .param("parentId", String.valueOf(mealsCategory.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Cannot demote category with subcategories"));
     }
 
     @Test
