@@ -159,6 +159,8 @@ public class AccountTest {
         Assertions.assertEquals(new BigDecimal("1001.30"), updateUser.getNetAssets());
     }
 
+    //TODO: test delete LoanAccount, CreditAccount with debt and installment plan
+
     @Test
     @WithMockUser(username = "Alice") // Simulating an authenticated user
     public void testDeleteAccountWithTransactions() throws Exception {
@@ -439,6 +441,7 @@ public class AccountTest {
     @Test
     @WithMockUser(username = "Alice")
     public void testCreditAccount() throws Exception{
+        //test credit BasicAccount
         Account basicAccount = new BasicAccount("account1",
                 BigDecimal.valueOf(1000),
                 null,
@@ -460,6 +463,7 @@ public class AccountTest {
         Assertions.assertEquals(new BigDecimal("1010"), updateAccount.getBalance());
 
 
+        //test credit CreditAccount
         Account creditAccount = new CreditAccount("account2",
                 BigDecimal.valueOf(1000),
                 testUser,
@@ -487,11 +491,32 @@ public class AccountTest {
         User updateUser=userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(new BigDecimal("2020"), updateUser.getTotalAssets());
 
+        //test credit LoanAccount
+        Account loanAccount = new LoanAccount("account3",
+                testUser,
+                null,
+                true,
+                36,
+                0,
+                BigDecimal.valueOf(0),
+                BigDecimal.valueOf(100),
+                null,
+                LocalDate.now(),
+                LoanAccount.RepaymentType.EQUAL_INTEREST
+        );
+        accountRepository.save(loanAccount);
+
+        mockMvc.perform(put("/accounts/" + loanAccount.getId() + "/credit")
+                        .param("amount", "10")
+                        .principal(() -> "Alice"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Cannot credit a loan account"));
     }
 
     @Test
     @WithMockUser(username = "Alice")
     public void testDebitAccount() throws Exception{
+        //test credit BasicAccount
         Account basicAccount = new BasicAccount("account1",
                 BigDecimal.valueOf(1000),
                 null,
@@ -512,8 +537,9 @@ public class AccountTest {
         Assertions.assertNotNull(updateAccount);
         Assertions.assertEquals(new BigDecimal("990"), updateAccount.getBalance());
 
+        //test credit CreditAccount with balance=0
         Account creditAccount = new CreditAccount("account2",
-                BigDecimal.valueOf(1000),
+                BigDecimal.valueOf(0),
                 testUser,
                 null,
                 true,
@@ -534,10 +560,35 @@ public class AccountTest {
 
         Account updateAccount2=accountRepository.findByName("account2");
         Assertions.assertNotNull(updateAccount2);
-        Assertions.assertEquals(new BigDecimal("990"), updateAccount2.getBalance());
+        Assertions.assertEquals(new BigDecimal("0"), updateAccount2.getBalance());
+        Assertions.assertEquals(new BigDecimal("10"), ((CreditAccount)updateAccount2).getCurrentDebt());
 
         User updateUser=userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(new BigDecimal("1980"), updateUser.getTotalAssets());
+        Assertions.assertEquals(new BigDecimal("990"), updateUser.getTotalAssets());
+        Assertions.assertEquals(new BigDecimal("10"), updateUser.getTotalLiabilities());
+        Assertions.assertEquals(new BigDecimal("980"), updateUser.getNetAssets());
+
+        //test credit LoanAccount
+        Account loanAccount = new LoanAccount("account3",
+                testUser,
+                null,
+                true,
+                36,
+                0,
+                BigDecimal.valueOf(0), //annual interest rate=0
+                BigDecimal.valueOf(100),
+                null,
+                LocalDate.now(),
+                LoanAccount.RepaymentType.EQUAL_INTEREST
+        );
+
+        accountRepository.save(loanAccount);
+
+        mockMvc.perform(put("/accounts/" + loanAccount.getId() + "/debit")
+                        .param("amount", "10")
+                        .principal(() -> "Alice"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Cannot debit a loan account"));
     }
 
     //TODO
