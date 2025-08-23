@@ -144,6 +144,34 @@ public class LoanAccount extends Account {
         this.owner.updateTotalLiabilities();
         this.owner.updateNetAsset();
     }
+
+    public void repayLoan(Account fromAccount, BigDecimal amount){
+
+        if(fromAccount != null) {
+            fromAccount.debit(loanAmount);
+        }else {
+            this.owner.updateTotalAssets();
+            this.owner.updateTotalLiabilities();
+            this.owner.updateNetAsset();
+        }
+        //calculate how many periods are repaid
+        BigDecimal paidAmount = BigDecimal.ZERO;
+        int periodsPaid = 0;
+        for(int i = repaidPeriods + 1; i <= totalPeriods; i++) {
+            BigDecimal monthlyRepayment = getMonthlyRepayment(i);
+            if(paidAmount.add(monthlyRepayment).compareTo(amount) <= 0) {
+                paidAmount = paidAmount.add(monthlyRepayment);
+                periodsPaid++;
+            } else {
+                break;
+            }
+        }
+        this.repaidPeriods += periodsPaid;
+        this.owner.updateTotalAssets();
+        this.owner.updateTotalLiabilities();
+        this.owner.updateNetAsset();
+    }
+
     public BigDecimal getRemainingAmount() {
         BigDecimal total = BigDecimal.ZERO;
         for (int i = repaidPeriods + 1; i <= totalPeriods; i++) {
