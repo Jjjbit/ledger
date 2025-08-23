@@ -529,9 +529,54 @@ public class LedgerCategoryComponentTest {
 
     }
 
-    //TODO
     @Test
     @WithMockUser(username = "Alice")
-    public void testChangeParent() throws Exception{}
+    public void testChangeParent() throws Exception{
+        LedgerCategoryComponent foodCategory=new LedgerCategory("Food", CategoryType.EXPENSE, testLedger1);
+        testLedger1.addCategoryComponent(foodCategory);
+        ledgerCategoryComponentRepository.save(foodCategory);
+
+        LedgerCategoryComponent lunch=new LedgerSubCategory("Lunch", CategoryType.EXPENSE, testLedger1);
+        foodCategory.add(lunch);
+        testLedger1.addCategoryComponent(lunch);
+        ledgerCategoryComponentRepository.save(lunch);
+
+        Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, testAccount, testLedger1, lunch);
+        transactionRepository.save(transaction1);
+        testAccount.addTransaction(transaction1);
+        testLedger1.addTransaction(transaction1);
+        lunch.addTransaction(transaction1);
+
+        LedgerCategoryComponent mealsCategory=new LedgerCategory("Meals", CategoryType.EXPENSE, testLedger1);
+        testLedger1.addCategoryComponent(mealsCategory);
+        ledgerCategoryComponentRepository.save(mealsCategory);
+
+        accountRepository.save(testAccount);
+        ledgerRepository.save(testLedger1);
+        ledgerCategoryComponentRepository.save(lunch);
+
+        mockMvc.perform(put("/ledger-category-components/"+ foodCategory.getId() +"/change-parent")
+                        .principal(() -> "Alice")
+                        .param("newParentId", String.valueOf(mealsCategory.getId())))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Cannot change parent of category"));
+
+        mockMvc.perform(put("/ledger-category-components/"+ lunch.getId() +"/change-parent")
+                        .principal(() -> "Alice")
+                        .param("newParentId", String.valueOf(mealsCategory.getId())))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Changed parent successfully"));
+
+        LedgerCategoryComponent updateLunch=ledgerCategoryComponentRepository.findByLedgerAndName(testLedger1, "Lunch");
+        Assertions.assertEquals(mealsCategory.getId(), updateLunch.getParent().getId());
+
+        LedgerCategoryComponent updateMealsCategory=ledgerCategoryComponentRepository.findByLedgerAndName(testLedger1, "Meals");
+        Assertions.assertEquals(1, updateMealsCategory.getChildren().size());
+        Assertions.assertEquals(1, updateMealsCategory.getTransactions().size());
+
+        LedgerCategoryComponent updateFoodCategory=ledgerCategoryComponentRepository.findByLedgerAndName(testLedger1, "Food");
+        Assertions.assertEquals(0, updateFoodCategory.getChildren().size());
+
+    }
 
 }
