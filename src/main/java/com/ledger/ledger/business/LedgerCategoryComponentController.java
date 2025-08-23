@@ -328,6 +328,6 @@ public class LedgerCategoryComponentController {
         newParent.add(category); //aggiunge a parente nuovo
         ledgerCategoryComponentRepository.save(category);
 
-        return ResponseEntity.ok("change parent successfully");
+        return ResponseEntity.ok("Changed parent successfully");
     }
 }
