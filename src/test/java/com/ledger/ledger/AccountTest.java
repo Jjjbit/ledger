@@ -46,6 +46,9 @@ public class AccountTest {
     @Autowired
     private TransactionRepository transactionRepository;
 
+    @Autowired
+    private InstallmentPlanRepository installmentPlanRepository;
+
     private Ledger testLedger;
     private User testUser;
     private LedgerCategoryComponent foodCategory;
@@ -591,15 +594,106 @@ public class AccountTest {
                 .andExpect(content().string("Cannot debit a loan account"));
     }
 
-    //TODO
     @Test
     @WithMockUser(username = "Alice")
-    public void testRepayDebt() throws Exception{}
+    public void testRepayDebt() throws Exception{
+        //test repayDebt CreditAccount
+        Account creditAccount = new CreditAccount("account2",
+                BigDecimal.valueOf(1000),
+                testUser,
+                null,
+                true,
+                true,
+                BigDecimal.valueOf(100), //credit limit
+                BigDecimal.valueOf(100), //current debt
+                null,
+                null,
+                AccountType.CREDIT_CARD
+        );
+        accountRepository.save(creditAccount);
+
+        Account fromAccount = new BasicAccount("from account",
+                BigDecimal.valueOf(200),
+                null,
+                true,
+                true,
+                AccountType.CASH,
+                AccountCategory.FUNDS,
+                testUser);
+        accountRepository.save(fromAccount);
+
+        mockMvc.perform(put("/accounts/" + creditAccount.getId() + "/repay-debt")
+                        .param("amount", "50")
+                        .param("fromAccountId", fromAccount.getId().toString())
+                        .principal(() -> "Alice"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Debt repaid successfully"));
+
+        Account updateCreditAccount=accountRepository.findByName("account2");
+        Assertions.assertNotNull(updateCreditAccount);
+        Assertions.assertEquals(new BigDecimal("50"), ((CreditAccount)updateCreditAccount).getCurrentDebt());
+
+        Account updateFromAccount=accountRepository.findByName("from account");
+        Assertions.assertNotNull(updateFromAccount);
+        Assertions.assertEquals(new BigDecimal("150"), updateFromAccount.getBalance());
+
+        User updateUser=userRepository.findById(testUser.getId()).orElse(null);
+        Assertions.assertEquals(new BigDecimal("1150"), updateUser.getTotalAssets());
+        Assertions.assertEquals(new BigDecimal("50"), updateUser.getTotalLiabilities());
+        Assertions.assertEquals(new BigDecimal("1100"), updateUser.getNetAssets());
+    }
 
     @Test
     @WithMockUser(username = "Alice")
-    public void testRepayInstallmentPlan() throws Exception{}
+    public void testRepayInstallmentPlan() throws Exception{
+        //test repayInstallmentPlan CreditAccount
+        Account creditAccount = new CreditAccount("account2",
+                BigDecimal.valueOf(1000),
+                testUser,
+                null,
+                true,
+                true,
+                BigDecimal.valueOf(1000), //credit limit
+                BigDecimal.valueOf(0), //current debt
+                null,
+                null,
+                AccountType.CREDIT_CARD
+        );
+        accountRepository.save(creditAccount);
 
+        InstallmentPlan installmentPlan = new InstallmentPlan(
+                BigDecimal.valueOf(1200), // total amount
+                12, // total periods
+                BigDecimal.valueOf(0), // fee rate
+                1, // repaid periods
+                InstallmentPlan.FeeStrategy.EVENLY_SPLIT,
+                creditAccount
+        );
+        installmentPlanRepository.save(installmentPlan);
+
+        ((CreditAccount) creditAccount).addInstallmentPlan(installmentPlan);
+        accountRepository.save(creditAccount);
+
+
+        mockMvc.perform(put("/accounts/" + creditAccount.getId() + "/repay-installment-plan")
+                        .param("installmentPlanId", installmentPlan.getId().toString())
+                        .principal(() -> "Alice"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Installment plan repaid successfully"));
+
+        Account updateCreditAccount=accountRepository.findByName("account2");
+        Assertions.assertNotNull(updateCreditAccount);
+        Assertions.assertEquals(new BigDecimal("1000.00"), ((CreditAccount)updateCreditAccount).getCurrentDebt());
+        Assertions.assertEquals(2, ((CreditAccount)updateCreditAccount).getInstallmentPlans().get(0).getPaidPeriods());
+
+
+        User updateUser=userRepository.findById(testUser.getId()).orElse(null);
+        Assertions.assertEquals(new BigDecimal("900.00"), updateUser.getTotalAssets());
+        Assertions.assertEquals(new BigDecimal("1000.00"), updateUser.getTotalLiabilities());
+        Assertions.assertEquals(new BigDecimal("-100.00"), updateUser.getNetAssets());
+    }
+
+    //TODO:  repayLoan for LoanAccount
     @Test
     @WithMockUser(username = "Alice")
     public void testRepayLoan() throws Exception{}
