@@ -14,6 +14,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 
 import java.security.Principal;
+import java.util.ArrayList;
+import java.util.List;
 
 @RestController
 @RequestMapping("/ledger-category-components")
@@ -167,7 +169,9 @@ public class LedgerCategoryComponentController {
                 transactionRepository.save(t);
             }
         }else{ //cancalla anche le transazioni
-            for (Transaction t : ledgerCategoryComponent.getTransactions()) {
+            List<Transaction> transactionsToDelete = new ArrayList<>(ledgerCategoryComponent.getTransactions());
+            for (Transaction t : transactionsToDelete) {
+
                 Account account=t.getAccount();
                 account.getTransactions().remove(t);
                 if(t instanceof Income){
@@ -176,22 +180,19 @@ public class LedgerCategoryComponentController {
                     account.credit(t.getAmount());
                 }
 
-                //t.getAccount().removeTransaction(t);
                 t.setAccount(null);
 
                 Ledger ledger=t.getLedger();
                 ledger.getTransactions().remove(t);
                 t.setLedger(null);
 
-                t.getCategory().getTransactions().remove(t);
                 t.setCategory(null);
 
                 transactionRepository.save(t);
                 transactionRepository.delete(t);
             }
-            //ledgerCategoryComponent.getTransactions().clear();
         }
-
+        ledgerCategoryComponent.getTransactions().clear();
         ledgerCategoryComponent.getBudgets().clear();
 
         if (ledgerCategoryComponent instanceof LedgerSubCategory) {
@@ -228,7 +229,7 @@ public class LedgerCategoryComponentController {
             return ResponseEntity.badRequest().body("Must be a Category");
         }
 
-        if (parentId == null) {
+        if (parentId == null || parentId.equals(id)) {
             return ResponseEntity.badRequest().body("Demote must have parentId");
         }
 
@@ -243,14 +244,90 @@ public class LedgerCategoryComponentController {
             return ResponseEntity.badRequest().body("Cannot demote category with subcategories");
         }
 
+        String originalName = category.getName();
+        category.setName(category.getName() + "_old_" + category.getId());
+        ledgerCategoryComponentRepository.save(category);
 
-        LedgerCategoryComponent newSub = new LedgerSubCategory(category.getName(), category.getType(), category.getLedger());
-        newSub.getTransactions().addAll(category.getTransactions());
+        LedgerCategoryComponent newSub = new LedgerSubCategory(originalName, category.getType(), category.getLedger());
+        for (Transaction t : category.getTransactions()) {
+            t.setCategory(newSub);
+            newSub.addTransaction(t);
+        }
         parent.add(newSub);
 
-        ledgerCategoryComponentRepository.delete(category);
         ledgerCategoryComponentRepository.save(newSub);
+        ledgerCategoryComponentRepository.delete(category);
 
-        return ResponseEntity.ok("Demote successfully");
+        return ResponseEntity.ok("Demoted successfully");
+    }
+
+
+    @PutMapping("/{id}/promote")
+    @Transactional
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> promoteSubCategory(@PathVariable Long id,
+                                                     Principal principal){
+        User user=userRepository.findByUsername(principal.getName());
+        if(user==null){
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+
+        LedgerCategoryComponent category=ledgerCategoryComponentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Category not found"));
+
+        if (!(category instanceof LedgerSubCategory)) {
+            return ResponseEntity.badRequest().body("Must be a SubCategory");
+        }
+
+        String originalName = category.getName();
+        category.setName(category.getName() + "_old_" + category.getId());
+        ledgerCategoryComponentRepository.save(category);
+
+        LedgerCategoryComponent newCategory = new LedgerCategory(originalName, category.getType(), category.getLedger());
+        for (Transaction t : category.getTransactions()) {
+            t.setCategory(newCategory);
+            newCategory.addTransaction(t);
+        }
+
+        ledgerCategoryComponentRepository.delete(category);
+        ledgerCategoryComponentRepository.save(newCategory);
+
+        return ResponseEntity.ok("Promoted successfully");
+    }
+
+    @PutMapping("{id}/change-parent")
+    @Transactional
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> changeParent(@PathVariable Long id,
+                                               Principal principal,
+                                               @RequestParam Long newParentId){
+        User user=userRepository.findByUsername(principal.getName());
+        if(user==null){
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+
+        LedgerCategoryComponent category=ledgerCategoryComponentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Category not found"));
+
+        if (newParentId == null) {
+            return ResponseEntity.badRequest().body("changing parent must have parentId");
+        }
+
+        LedgerCategoryComponent newParent = ledgerCategoryComponentRepository.findById(newParentId)
+                .orElseThrow(() -> new IllegalArgumentException("Parent not found"));
+
+        if(newParent instanceof LedgerSubCategory){
+            return ResponseEntity.badRequest().body("new parent must be Category");
+        }
+
+        if(category instanceof LedgerCategory){
+            return ResponseEntity.badRequest().body("Cannot change parent of category");
+        }
+
+        category.getParent().getChildren().remove(category); //rimuove da parente vecchio
+        newParent.add(category); //aggiunge a parente nuovo
+        ledgerCategoryComponentRepository.save(category);
+
+        return ResponseEntity.ok("change parent successfully");
     }
 }
