@@ -465,11 +465,63 @@ public class LedgerCategoryComponentTest {
         Assertions.assertEquals(1, updateMealsCategory.getChildren().size());
         Assertions.assertEquals(1, updateMealsCategory.getTransactions().size());
     }
-
-    //TODO
+    //TODO: demote error con figli
     @Test
     @WithMockUser(username = "Alice")
-    public void testPromote() throws Exception{}
+    public void testDemoteWithChildren() throws Exception{
+        LedgerCategoryComponent foodCategory=new LedgerCategory("Food", CategoryType.EXPENSE, testLedger1);
+        testLedger1.addCategoryComponent(foodCategory);
+        ledgerCategoryComponentRepository.save(foodCategory);
+
+        LedgerCategoryComponent lunch=new LedgerSubCategory("Lunch", CategoryType.EXPENSE, testLedger1);
+        foodCategory.add(lunch);
+        testLedger1.addCategoryComponent(lunch);
+        ledgerCategoryComponentRepository.save(lunch);
+
+        LedgerCategoryComponent mealsCategory=new LedgerCategory("Meals", CategoryType.EXPENSE, testLedger1);
+        testLedger1.addCategoryComponent(mealsCategory);
+        ledgerCategoryComponentRepository.save(mealsCategory);
+
+        Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, testAccount, testLedger1, foodCategory);
+        transactionRepository.save(transaction1);
+        testAccount.addTransaction(transaction1);
+        testLedger1.addTransaction(transaction1);
+        foodCategory.addTransaction(transaction1);
+
+        accountRepository.save(testAccount);
+        ledgerRepository.save(testLedger1);
+        ledgerCategoryComponentRepository.save(foodCategory);
+    }
+
+    @Test
+    @WithMockUser(username = "Alice")
+    public void testPromote() throws Exception{
+        LedgerCategoryComponent foodCategory=new LedgerCategory("Food", CategoryType.EXPENSE, testLedger1);
+        testLedger1.addCategoryComponent(foodCategory);
+        ledgerCategoryComponentRepository.save(foodCategory);
+
+        LedgerCategoryComponent lunch=new LedgerSubCategory("Lunch", CategoryType.EXPENSE, testLedger1);
+        foodCategory.add(lunch);
+        testLedger1.addCategoryComponent(lunch);
+        ledgerCategoryComponentRepository.save(lunch);
+
+        Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, testAccount, testLedger1, foodCategory);
+        transactionRepository.save(transaction1);
+        testAccount.addTransaction(transaction1);
+        testLedger1.addTransaction(transaction1);
+        foodCategory.addTransaction(transaction1);
+
+        mockMvc.perform(put("/ledger-category-components/"+ foodCategory.getId() +"/promote")
+                        .principal(() -> "Alice"))
+                .andExpect(status().isBadRequest())
+                .andExpect(content().string("Must be a SubCategory"));
+
+        mockMvc.perform(put("/ledger-category-components/"+ lunch.getId() +"/promote")
+                        .principal(() -> "Alice"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Promoted successfully"));
+
+    }
 
     //TODO
     @Test
