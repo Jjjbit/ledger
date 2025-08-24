@@ -15,6 +15,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.Optional;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
@@ -44,6 +45,9 @@ public class LedgerCategoryComponentTest {
 
     @Autowired
     private TransactionRepository transactionRepository;
+
+    @Autowired
+    private BudgetRepository budgetRepository;
 
     private Ledger testLedger1;
     private Ledger testLedger2;
@@ -219,16 +223,23 @@ public class LedgerCategoryComponentTest {
         testLedger1.addCategoryComponent(lunch);
         ledgerCategoryComponentRepository.save(lunch);
 
+        //test delete subcategory with transactions migrated to another Subcategory
         LedgerCategoryComponent snacks=new LedgerSubCategory("Snacks", CategoryType.EXPENSE, testLedger1);
         foodCategory.add(snacks);
         testLedger1.addCategoryComponent(snacks);
         ledgerCategoryComponentRepository.save(snacks);
 
+        //test delete subcategory with transactions migrated to another category
         Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, testAccount, testLedger1, lunch);
         transactionRepository.save(transaction1);
         testAccount.addTransaction(transaction1);
         testLedger1.addTransaction(transaction1);
         lunch.addTransaction(transaction1);
+
+        //test delete subcategory with budget
+        Budget budget1=new Budget(BigDecimal.valueOf(100), Budget.Period.MONTHLY, lunch, testUser);
+        lunch.addBudget(budget1);
+        budgetRepository.save(budget1);
 
         accountRepository.save(testAccount);
         ledgerRepository.save(testLedger1);
@@ -274,6 +285,9 @@ public class LedgerCategoryComponentTest {
 
         User updateUser=userRepository.findByUsername("Alice");
         Assertions.assertEquals(new BigDecimal("990"), updateUser.getTotalAssets());
+
+        Optional<Budget> updateBudgetOpt = budgetRepository.findById(budget1.getId());
+        Assertions.assertTrue(updateBudgetOpt.isEmpty());
     }
 
     @Test
@@ -293,6 +307,11 @@ public class LedgerCategoryComponentTest {
         testAccount.addTransaction(transaction1);
         testLedger1.addTransaction(transaction1);
         foodCategory.addTransaction(transaction1);
+
+        //test delete category with budget
+        Budget budget1=new Budget(BigDecimal.valueOf(100), Budget.Period.MONTHLY, foodCategory, testUser);
+        foodCategory.addBudget(budget1);
+        budgetRepository.save(budget1);
 
         accountRepository.save(testAccount);
         ledgerRepository.save(testLedger1);
@@ -317,6 +336,8 @@ public class LedgerCategoryComponentTest {
         Account updateAccount=accountRepository.findByName("Test Account");
         Assertions.assertEquals(new BigDecimal("1000"), updateAccount.getBalance());
 
+        Optional<Budget> updateBudgetOpt = budgetRepository.findById(budget1.getId());
+        Assertions.assertTrue(updateBudgetOpt.isEmpty());
     }
 
     @Test
