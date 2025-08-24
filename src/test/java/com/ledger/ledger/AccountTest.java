@@ -4,6 +4,8 @@ import com.ledger.ledger.domain.*;
 import com.ledger.ledger.domain.LedgerCategoryComponent;
 import com.ledger.ledger.repository.*;
 import jakarta.transaction.Transactional;
+import org.assertj.core.api.recursive.assertion.DefaultRecursiveAssertionIntrospectionStrategy;
+import org.assertj.core.api.recursive.assertion.RecursiveAssertionDriver;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -826,6 +828,7 @@ public class AccountTest {
                 .andExpect(content().string("Cannot debit a loan account"));
     }
 
+    //TODO: test repayDebt with LoanAccount
     @Test
     @WithMockUser(username = "Alice")
     public void testRepayDebt() throws Exception{
@@ -910,13 +913,18 @@ public class AccountTest {
         mockMvc.perform(put("/accounts/" + creditAccount.getId() + "/repay-installment-plan")
                         .param("installmentPlanId", installmentPlan.getId().toString())
                         .principal(() -> "Alice")
-                        .param("amount", ""))
+                        .param("amount", "")
+                        .param("ledgerId", testLedger.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Installment plan repaid successfully"));
 
         Account updateCreditAccount=accountRepository.findByName("account2");
         Assertions.assertEquals(new BigDecimal("1000.00"), ((CreditAccount)updateCreditAccount).getCurrentDebt());
         Assertions.assertEquals(2, ((CreditAccount)updateCreditAccount).getInstallmentPlans().get(0).getPaidPeriods());
+        Assertions.assertEquals(1, ((CreditAccount)updateCreditAccount).getTransactions().size());
+
+        Ledger updateLedger=ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(1, updateLedger.getTransactions().size());
 
         InstallmentPlan updateInstallmentPlan=installmentPlanRepository.findById(installmentPlan.getId()).orElse(null);
         Assertions.assertEquals(2, updateInstallmentPlan.getPaidPeriods());
@@ -930,7 +938,8 @@ public class AccountTest {
         mockMvc.perform(put("/accounts/" + creditAccount.getId() + "/repay-installment-plan")
                         .param("installmentPlanId", installmentPlan.getId().toString())
                         .principal(() -> "Alice")
-                        .param("amount", "200"))
+                        .param("amount", "200")
+                        .param("ledgerId", testLedger.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Installment plan repaid successfully"));
 
@@ -940,6 +949,9 @@ public class AccountTest {
 
         InstallmentPlan updateInstallmentPlan2=installmentPlanRepository.findById(installmentPlan.getId()).orElse(null);
         Assertions.assertEquals(4, updateInstallmentPlan2.getPaidPeriods());
+
+        Ledger updateLedger2=ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(2, updateLedger2.getTransactions().size());
 
         User updateUser2=userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(new BigDecimal("700.00"), updateUser2.getTotalAssets());
