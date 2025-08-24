@@ -163,7 +163,6 @@ public class AccountTest {
         Assertions.assertEquals(new BigDecimal("1001.30"), updateUser.getNetAssets());
     }
 
-
     @Test
     @WithMockUser(username = "Alice") // Simulating an authenticated user
     public void testDeleteCreditAccountWithTransactions() throws Exception {
@@ -300,6 +299,102 @@ public class AccountTest {
 
 
     //TODO: test delete LoanAccount
+    @Test
+    @WithMockUser(username = "Alice")
+    public void testDeleteLoanAccountWithTransactions() throws Exception{
+        Account receivingAccount = new BasicAccount("receiving account",
+                BigDecimal.valueOf(1000),
+                null,
+                true,
+                true,
+                AccountType.CASH,
+                AccountCategory.FUNDS,
+                testUser);
+        accountRepository.save(receivingAccount);
+
+        Account account = new LoanAccount("Test Account",
+                testUser,
+                null,
+                true,
+                36,
+                0,
+                BigDecimal.valueOf(1), // annual interest rate
+                BigDecimal.valueOf(100), // loan amount
+                receivingAccount,
+                LocalDate.now(),
+                LoanAccount.RepaymentType.EQUAL_INTEREST
+        );
+        accountRepository.save(account);
+
+
+        mockMvc.perform(delete("/accounts/" + account.getId())
+                        .param("deleteTransactions", "true")
+                        .principal(() -> "Alice"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Account and associated transactions deleted successfully"));
+
+        Account deletedAccount = accountRepository.findById(account.getId()).orElse(null);
+        Assertions.assertNull(deletedAccount);
+
+        User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1000")));
+        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().intValue());
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("1000")));
+    }
+
+    @Test
+    @WithMockUser(username = "Alice")
+    public void testDeleteLoanAccountWithoutTransactions() throws Exception{
+        Account receivingAccount = new BasicAccount("receiving account",
+                BigDecimal.valueOf(1000),
+                null,
+                true,
+                true,
+                AccountType.CASH,
+                AccountCategory.FUNDS,
+                testUser);
+        accountRepository.save(receivingAccount);
+
+        Account account = new LoanAccount("Test Account",
+                testUser,
+                null,
+                true,
+                36,
+                1,
+                BigDecimal.valueOf(1), // annual interest rate
+                BigDecimal.valueOf(100), // loan amount
+                receivingAccount,
+                LocalDate.now(),
+                LoanAccount.RepaymentType.EQUAL_INTEREST
+        );
+        accountRepository.save(account);
+        //remaing loan amount should be 98.70
+
+        // Add transactions to the account
+        Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, account, testLedger, foodCategory);
+        Transaction transaction2 = new Income(LocalDate.now(), BigDecimal.valueOf(1500), null, account, testLedger, salaryCategory);
+        transactionRepository.save(transaction1);
+        transactionRepository.save(transaction2);
+
+        account.addTransaction(transaction1);
+        account.addTransaction(transaction2);
+
+        accountRepository.save(account);
+
+        mockMvc.perform(delete("/accounts/" + account.getId())
+                        .param("deleteTransactions", "false")
+                        .principal(() -> "Alice"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Account disassociated from transactions and deleted successfully"));
+
+        Account deletedAccount = accountRepository.findById(account.getId()).orElse(null); //cerca account da database
+        Assertions.assertNull(deletedAccount);
+
+        User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1490")));
+        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(new BigDecimal("0")));
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("1490")));
+    }
 
     @Test
     @WithMockUser(username = "Alice") // Simulating an authenticated user
@@ -870,37 +965,79 @@ public class AccountTest {
         );
         accountRepository.save(loanAccount);
 
+        Account fromAccount = new BasicAccount("from account",
+                BigDecimal.valueOf(2000),
+                null,
+                true,
+                true,
+                AccountType.CASH,
+                AccountCategory.FUNDS,
+                testUser);
+        accountRepository.save(fromAccount);
+
+        //repayloan with no specific amount
         mockMvc.perform(put("/accounts/" + loanAccount.getId() + "/repay-loan")
                         .principal(() -> "Alice")
-                        .param("fromAccountId", "")
-                        .param("amount", ""))
+                        .param("fromAccountId", fromAccount.getId().toString())
+                        .param("amount", "")
+                        .param("ledgerId", testLedger.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Loan repaid successfully"));
 
         Account updateLoanAccount=accountRepository.findByName("account2");
         Assertions.assertEquals(2, ((LoanAccount)updateLoanAccount).getRepaidPeriods());
-        Assertions.assertEquals(new BigDecimal("95.88"), ((LoanAccount)updateLoanAccount).getRemainingLoanAmount());
+        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount).getRemainingAmount().compareTo(new BigDecimal("95.88")));
+
+        Account updateFromAccount=accountRepository.findByName("from account");
+        Assertions.assertEquals(0, updateFromAccount.getBalance().compareTo(new BigDecimal("1997.18")));
 
         User updateUser=userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(new BigDecimal("0"), updateUser.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("95.88"), updateUser.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("-95.88"), updateUser.getNetAssets());
+        Assertions.assertEquals(0, updateUser.getTotalAssets().compareTo(new BigDecimal("1997.18")));
+        Assertions.assertEquals(0, updateUser.getTotalLiabilities().compareTo(new BigDecimal("95.88")));
+        Assertions.assertEquals(0, updateUser.getNetAssets().compareTo(new BigDecimal("1901.30")));
 
+        Ledger updateLedger=ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(1, updateLedger.getTransactions().size());
+
+        //repayLoan with specific amount
         mockMvc.perform(put("/accounts/" + loanAccount.getId() + "/repay-loan")
                         .principal(() -> "Alice")
-                        .param("fromAccountId", "")
-                        .param("amount", "28.5"))
+                        .param("fromAccountId", fromAccount.getId().toString())
+                        .param("amount", "28.50")
+                        .param("ledgerId", testLedger.getId().toString()))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Loan repaid successfully"));
 
         Account updateLoanAccount2=accountRepository.findByName("account2");
         Assertions.assertEquals(12, ((LoanAccount)updateLoanAccount2).getRepaidPeriods());
-        Assertions.assertEquals(new BigDecimal("67.68"), ((LoanAccount)updateLoanAccount2).getRemainingLoanAmount());
+        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount2).getRemainingAmount().compareTo(new BigDecimal("67.68")));
+
+        Account updateFromAccount2=accountRepository.findByName("from account");
+        Assertions.assertEquals(0, updateFromAccount2.getBalance().compareTo(new BigDecimal("1968.68")));
 
         User updateUser2=userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(new BigDecimal("0"), updateUser2.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("67.68"), updateUser2.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("-67.68"), updateUser2.getNetAssets());
+        Assertions.assertEquals(0, updateUser2.getTotalAssets().compareTo(new BigDecimal("1968.68")));
+        Assertions.assertEquals(0, updateUser2.getTotalLiabilities().compareTo(new BigDecimal("67.68")));
+        Assertions.assertEquals(0, updateUser2.getNetAssets().compareTo(new BigDecimal("1901.00")));
+
+        //repayLoan with specific amount and no fromAccountId
+        mockMvc.perform(put("/accounts/" + loanAccount.getId() + "/repay-loan")
+                        .principal(() -> "Alice")
+                        .param("fromAccountId", "")
+                        .param("amount", "60")
+                        .param("ledgerId", testLedger.getId().toString()))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Loan repaid successfully"));
+
+        Account updateLoanAccount3=accountRepository.findByName("account2");
+        Assertions.assertEquals(33, ((LoanAccount)updateLoanAccount3).getRepaidPeriods());
+        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount3).getRemainingAmount().compareTo(new BigDecimal("8.46")));
+
+        User updateUser3=userRepository.findById(testUser.getId()).orElse(null);
+        Assertions.assertEquals(0, updateUser3.getTotalAssets().compareTo(new BigDecimal("1968.68")));
+        Assertions.assertEquals(0, updateUser3.getTotalLiabilities().compareTo(new BigDecimal("8.46")));
+        Assertions.assertEquals(0, updateUser3.getNetAssets().compareTo(new BigDecimal("1960.22")));
+
 
     }
 }

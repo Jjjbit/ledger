@@ -6,7 +6,6 @@ import jakarta.validation.constraints.Max;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
-import java.time.MonthDay;
 
 @Entity
 @Table(name = "loan_account")
@@ -42,6 +41,12 @@ public class LoanAccount extends Account {
     @Enumerated(EnumType.STRING)
     private RepaymentType repaymentType;
 
+    @Column(name = "remaining_amount", precision = 15, scale = 2)
+    private BigDecimal remainingAmount;
+
+    @Column(name = "is_ended", nullable = false)
+    protected boolean isEnded = false;
+
     public LoanAccount() {
         super();
         this.type = AccountType.LOAN;
@@ -65,15 +70,13 @@ public class LoanAccount extends Account {
         this.annualInterestRate = interestRate;
         this.loanAmount = loanAmount;
         this.receivingAccount = receivingAccount;
-        if(receivingAccount !=null){
-            receivingAccount.credit(loanAmount);
-        }
         this.repaymentDay = repaymentDate;
         if (repaymentType==null){
             this.repaymentType = RepaymentType.EQUAL_INTEREST;
         }else{
             this.repaymentType = repaymentType;
         }
+        this.remainingAmount=calculateRemainingLoanAmount();
         this.owner.addAccount(this);
     }
 
@@ -83,7 +86,12 @@ public class LoanAccount extends Account {
         }
         this.totalPeriods = totalPeriods;
     }
-
+    public void setRemainingAmount(BigDecimal remainingAmount) {
+        this.remainingAmount = remainingAmount;
+    }
+    public BigDecimal getRemainingAmount() {
+        return remainingAmount;
+    }
     public void setRepaidPeriods(int repaidPeriods) {
         if (repaidPeriods < 0 || repaidPeriods > totalPeriods) {
             throw new IllegalArgumentException("Repaid periods must be between 0 and total periods");
@@ -110,6 +118,8 @@ public class LoanAccount extends Account {
         this.repaymentType = repaymentType;
     }
     public LocalDate getRepaymentDay(){return this.repaymentDay;}
+    public Account getReceivingAccount(){return this.receivingAccount;}
+    public BigDecimal getLoanAmount(){return this.loanAmount;}
 
 
     @Override
@@ -132,47 +142,85 @@ public class LoanAccount extends Account {
                 .divide(BigDecimal.valueOf(12), 10, RoundingMode.HALF_UP);
     }
 
-    public void repayLoan(Account fromAccount) {
-        BigDecimal monthlyRepayment = getMonthlyRepayment(repaidPeriods + 1);
-        if(fromAccount != null) {
-            fromAccount.debit(monthlyRepayment);
-        }else {
-            this.owner.updateNetAssetsAndLiabilities(monthlyRepayment);
-        }
-        this.repaidPeriods++;
-        this.owner.updateTotalAssets();
-        this.owner.updateTotalLiabilities();
-        this.owner.updateNetAsset();
-    }
+    public void repayLoan(Account fromAccount, Ledger ledger) {
+        if(remainingAmount.compareTo(BigDecimal.ZERO) >=0) {
 
-    public void repayLoan(Account fromAccount, BigDecimal amount){
-
-        if(fromAccount != null) {
-            fromAccount.debit(loanAmount);
-        }else {
-            this.owner.updateTotalAssets();
-            this.owner.updateTotalLiabilities();
-            this.owner.updateNetAsset();
-        }
-        //calculate how many periods are repaid
-        BigDecimal paidAmount = BigDecimal.ZERO;
-        int periodsPaid = 0;
-        for(int i = repaidPeriods + 1; i <= totalPeriods; i++) {
-            BigDecimal monthlyRepayment = getMonthlyRepayment(i);
-            if(paidAmount.add(monthlyRepayment).compareTo(amount) <= 0) {
-                paidAmount = paidAmount.add(monthlyRepayment);
-                periodsPaid++;
-            } else {
-                break;
+            Transaction repaymentTransaction = new Transfer(
+                    LocalDate.now(),
+                    "Loan Repayment",
+                    fromAccount,
+                    this,
+                    getMonthlyRepayment(repaidPeriods + 1),
+                    ledger
+            );
+            transactions.add(repaymentTransaction);
+            if (ledger != null){
+                ledger.getTransactions().add(repaymentTransaction);
             }
+            if(fromAccount != null){
+                fromAccount.getTransactions().add(repaymentTransaction);
+            }
+            repaymentTransaction.execute();
+
+            this.repaidPeriods = this.repaidPeriods + 1;
+            this.remainingAmount=calculateRemainingLoanAmount();
+
+            owner.updateTotalAssets();
+            owner.updateTotalLiabilities();
+            owner.updateNetAsset();
+
+            checkAndUpdateStatus();
+        }else{
+            throw new IllegalStateException("All periods have already been paid.");
         }
-        this.repaidPeriods += periodsPaid;
-        this.owner.updateTotalAssets();
-        this.owner.updateTotalLiabilities();
-        this.owner.updateNetAsset();
     }
 
-    public BigDecimal getRemainingAmount() {
+    public void repayLoan(Account fromAccount, BigDecimal amount, Ledger ledger){
+        if(remainingAmount.compareTo(BigDecimal.ZERO) >=0 && repaidPeriods < totalPeriods) {
+            Transaction repaymentTransaction = new Transfer(
+                    LocalDate.now(),
+                    "Loan Partial Repayment",
+                    fromAccount,
+                    this,
+                    amount,
+                    ledger
+            );
+            transactions.add(repaymentTransaction);
+            repaymentTransaction.execute();
+            if (ledger != null){
+                ledger.getTransactions().add(repaymentTransaction);
+            }
+            if(fromAccount != null){
+                fromAccount.getTransactions().add(repaymentTransaction);
+
+            }
+            //calculate how many periods are repaid
+            BigDecimal paidAmount = BigDecimal.ZERO;
+            int periodsPaid = 0;
+            for (int i = repaidPeriods + 1; i <= totalPeriods; i++) {
+                BigDecimal monthlyRepayment = getMonthlyRepayment(i);
+                if (paidAmount.add(monthlyRepayment).compareTo(amount) <= 0) {
+                    paidAmount = paidAmount.add(monthlyRepayment);
+                    periodsPaid++;
+                } else {
+                    break;
+                }
+            }
+            this.repaidPeriods += periodsPaid;
+            //this.remainingAmount=remainingAmount.subtract(amount).setScale(2, RoundingMode.HALF_UP);
+            remainingAmount = calculateRemainingLoanAmount();
+
+            owner.updateTotalAssets();
+            owner.updateTotalLiabilities();
+            owner.updateNetAsset();
+
+            checkAndUpdateStatus();
+        }else{
+            throw new IllegalStateException("All periods have already been paid.");
+        }
+    }
+
+    public BigDecimal calculateRemainingLoanAmount() {
         BigDecimal total = BigDecimal.ZERO;
         for (int i = repaidPeriods + 1; i <= totalPeriods; i++) {
             total = total.add(getMonthlyRepayment(i));
@@ -288,6 +336,14 @@ public class LoanAccount extends Account {
         return interestBeforeFinal.add(finalPayment).setScale(2, RoundingMode.HALF_UP); // total repayment=interestBeforeFinal+finalPayment
     }
 
+    public void checkAndUpdateStatus() {
+        if(remainingAmount.compareTo(BigDecimal.ZERO) <= 0) {
+            this.isEnded = true;
+            this.remainingAmount = BigDecimal.ZERO;
+        } else {
+            this.isEnded = false;
+        }
+    }
 }
 
 
