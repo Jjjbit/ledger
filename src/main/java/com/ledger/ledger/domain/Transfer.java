@@ -3,6 +3,7 @@ package com.ledger.ledger.domain;
 import jakarta.persistence.*;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 
 @Entity
@@ -10,7 +11,7 @@ import java.time.LocalDate;
 public class Transfer extends Transaction{
 
     @ManyToOne
-    @JoinColumn(name = "toAccount_id", nullable=false)
+    @JoinColumn(name = "toAccount_id")
     private Account toAccount;
 
     public Transfer() {}
@@ -21,7 +22,6 @@ public class Transfer extends Transaction{
                     BigDecimal amount,
                     Ledger ledger) {
         super(date, amount, description, from, ledger, null, TransactionType.TRANSFER);
-        this.account = from;
         this.toAccount = to;
     }
 
@@ -32,25 +32,33 @@ public class Transfer extends Transaction{
         this.toAccount = toAccount;
     }
 
+    @Override
     public void execute() {
-        if (account.equals(toAccount)) {
-            throw new IllegalArgumentException("Cannot transfer to the same account.");
-        }
-        if(account==null && toAccount==null){
+        if (account == null && toAccount == null) {
             throw new IllegalArgumentException("select account");
-        }else {
-            if (!account.selectable || !toAccount.selectable || account.hidden || toAccount.hidden) {
-                throw new IllegalStateException("Accounts are not valid for transfer.");
-            }
         }
 
-        account.debit(amount);
-        if(toAccount !=null) {
-            toAccount.credit(amount);
+        if(account !=null) {
+            account.debit(amount);
         }
-        account.getOwner().updateTotalAssets();
-        account.getOwner().updateTotalLiabilities();
-        account.getOwner().updateNetAsset();
+        if (toAccount != null) {
+            if (toAccount.getType().equals(AccountType.LOAN)) {//for repayLoan
+                ((LoanAccount) toAccount).setRemainingAmount( ((LoanAccount) toAccount).calculateRemainingLoanAmount().subtract(amount));
+            }else if(toAccount.getType().equals(AccountType.CREDIT_CARD)){ //for repayInstallPlan
+                ((CreditAccount) toAccount).setCurrentDebt(((CreditAccount) toAccount).getCurrentDebt().subtract(amount));
+            } else {
+                toAccount.credit(amount);
+            }
+        }
+        if( account!= null) {
+            account.getOwner().updateTotalAssets();
+            account.getOwner().updateTotalLiabilities();
+            account.getOwner().updateNetAsset();
+        }else if(toAccount != null){
+            toAccount.getOwner().updateTotalAssets();
+            toAccount.getOwner().updateTotalLiabilities();
+            toAccount.getOwner().updateNetAsset();
+        }
     }
 
     @Override
