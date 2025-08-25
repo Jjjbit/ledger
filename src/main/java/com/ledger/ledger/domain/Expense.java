@@ -18,26 +18,22 @@ public class Expense extends Transaction {
                    Account account,
                    Ledger ledger,
                    LedgerCategoryComponent category) {
-        super(date, amount, description, account, ledger, category, TransactionType.EXPENSE);
+        super(date, amount, description, account, null, ledger, category, TransactionType.EXPENSE);
     }
     @Override
     public void execute() {
-        if (!account.hidden && account.selectable){
-            if (!account.getCategory().equals(AccountCategory.CREDIT) && account.balance.compareTo(amount) < 0) {
+        if (fromAccount != null && !fromAccount.hidden && fromAccount.selectable) {
+            if (!fromAccount.getCategory().equals(AccountCategory.CREDIT) && fromAccount.balance.compareTo(amount) < 0) {
                 throw new IllegalArgumentException("Insufficient funds in the account to execute this transaction.");
             }
-            account.debit(amount);
+            fromAccount.debit(amount);
         }
-        account.getOwner().updateTotalAssets();
-        account.getOwner().updateTotalLiabilities();
-        account.getOwner().updateNetAsset();
     }
     @Override
     public void rollback(){
-        account.credit(amount);
-        account.getOwner().updateTotalAssets();
-        account.getOwner().updateTotalLiabilities();
-        account.getOwner().updateNetAsset();
+        if (fromAccount != null) {
+            fromAccount.credit(amount);
+        }
     }
 
 }

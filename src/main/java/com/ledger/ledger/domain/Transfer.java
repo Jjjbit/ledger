@@ -10,9 +10,9 @@ import java.time.LocalDate;
 @Table(name = "transfer")
 public class Transfer extends Transaction{
 
-    @ManyToOne
+    /*@ManyToOne
     @JoinColumn(name = "toAccount_id")
-    private Account toAccount;
+    private Account toAccount;*/
 
     public Transfer() {}
     public Transfer(LocalDate date,
@@ -21,54 +21,27 @@ public class Transfer extends Transaction{
                     Account to,
                     BigDecimal amount,
                     Ledger ledger) {
-        super(date, amount, description, from, ledger, null, TransactionType.TRANSFER);
-        this.toAccount = to;
-    }
-
-    public Account getToAccount() {
-        return toAccount;
-    }
-    public void setToAccount(Account toAccount) {
-        this.toAccount = toAccount;
+        super(date, amount, description, from, to, ledger, null, TransactionType.TRANSFER);
     }
 
     @Override
     public void execute() {
-        if (account == null && toAccount == null) {
-            throw new IllegalArgumentException("select account");
-        }
-
-        if(account !=null) {
-            account.debit(amount);
+        if (fromAccount != null) {
+            fromAccount.debit(amount);
         }
         if (toAccount != null) {
-            if (toAccount.getType().equals(AccountType.LOAN)) {//for repayLoan
-                ((LoanAccount) toAccount).setRemainingAmount( ((LoanAccount) toAccount).calculateRemainingLoanAmount().subtract(amount));
-            }else if(toAccount.getType().equals(AccountType.CREDIT_CARD)){ //for repayInstallPlan
-                ((CreditAccount) toAccount).setCurrentDebt(((CreditAccount) toAccount).getCurrentDebt().subtract(amount));
-            } else {
+            if (!(toAccount instanceof LoanAccount || toAccount instanceof CreditAccount)) {
                 toAccount.credit(amount);
             }
         }
-        if( account!= null) {
-            account.getOwner().updateTotalAssets();
-            account.getOwner().updateTotalLiabilities();
-            account.getOwner().updateNetAsset();
-        }else if(toAccount != null){
-            toAccount.getOwner().updateTotalAssets();
-            toAccount.getOwner().updateTotalLiabilities();
-            toAccount.getOwner().updateNetAsset();
-        }
     }
-
     @Override
-    public void rollback(){
-        account.credit(amount);
-        if(toAccount != null) {
+    public void rollback() {
+        if (fromAccount != null) {
+            fromAccount.credit(amount);
+        }
+        if (toAccount != null) {
             toAccount.debit(amount);
         }
-        account.getOwner().updateTotalAssets();
-        account.getOwner().updateTotalLiabilities();
-        account.getOwner().updateNetAsset();
     }
 }

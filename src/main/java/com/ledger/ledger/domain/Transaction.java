@@ -22,8 +22,13 @@ public abstract class Transaction {
     protected String note;
 
     @ManyToOne
-    @JoinColumn(name = "account_id")
-    protected Account account; //relaizone tra Transaction e Account è associazione. più transazioni->un account
+    @JoinColumn(name = "from_account_id")
+    protected Account fromAccount;
+
+    @ManyToOne
+    @JoinColumn(name = "to_account_id")
+    protected Account toAccount;
+
 
     @ManyToOne
     @JoinColumn(name = "ledger_id")
@@ -41,14 +46,18 @@ public abstract class Transaction {
     public Transaction(LocalDate date,
                        BigDecimal amount,
                        String description,
-                       Account account,
+                       Account fromAccount,
+                          Account toAccount,
+                       //Account account,
                        Ledger ledger,
                        LedgerCategoryComponent category,
                        TransactionType type) {
         this.date = date != null ? date : LocalDate.now();
         this.amount = amount;
         this.note = description;
-        this.account = account;
+        this.fromAccount = fromAccount;
+        this.toAccount = toAccount;
+        //this.account = account;
         this.ledger = ledger;
         this.category = category;
         this.type = type;
@@ -73,8 +82,14 @@ public abstract class Transaction {
     public String getNote() {
         return note;
     }
-    public Account getAccount() {
-        return account;
+    public Account getFromAccount() {
+        return fromAccount;
+    }
+    public Account getToAccount() {
+        return toAccount;
+    }
+    public void setToAccount(Account toAccount) {
+        this.toAccount = toAccount;
     }
     public Ledger getLedger() {
         return ledger;
@@ -101,8 +116,8 @@ public abstract class Transaction {
     public void setCategory(LedgerCategoryComponent category) {
         this.category = category;
     }
-    public void setAccount(Account account) {
-        this.account = account;
+    public void setFromAccount(Account account) {
+        this.fromAccount = account;
     }
     public void setLedger(Ledger ledger){
         this.ledger = ledger;
