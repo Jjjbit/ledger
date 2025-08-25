@@ -1,10 +1,7 @@
 package com.ledger.ledger.business;
 
 import com.ledger.ledger.domain.*;
-import com.ledger.ledger.repository.AccountRepository;
-import com.ledger.ledger.repository.InstallmentPlanRepository;
-import com.ledger.ledger.repository.TransactionRepository;
-import com.ledger.ledger.repository.UserRepository;
+import com.ledger.ledger.repository.*;
 
 import org.springframework.format.annotation.DateTimeFormat;
 import org.springframework.http.HttpStatus;
@@ -20,8 +17,8 @@ import java.math.BigDecimal;
 import java.security.Principal;
 import java.time.LocalDate;
 import java.time.YearMonth;
-import java.util.ArrayList;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @RestController
 @RequestMapping("/accounts")
@@ -38,6 +35,8 @@ public class AccountController {
 
     @Autowired
     private InstallmentPlanRepository installmentPlanRepository;
+    @Autowired
+    private LedgerRepository ledgerRepository;
 
     @PostMapping("/create-basic-account")
     @Transactional
@@ -120,10 +119,9 @@ public class AccountController {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
         }
 
-        Account receivingAccount =null;
+        Account receivingAccount=null;
         if(receivingAccountId != null) {
-             receivingAccount = accountRepository.findById(receivingAccountId)
-                    .orElseThrow(() -> new IllegalArgumentException("Account not found"));
+            receivingAccount = accountRepository.findById(receivingAccountId).orElse(null);
         }
 
         LoanAccount account = new LoanAccount(
@@ -142,12 +140,7 @@ public class AccountController {
         return ResponseEntity.ok("Loan account created successfully");
     }
 
-    @GetMapping("/{id}")
-    public ResponseEntity<Account> getAccountById(@PathVariable Long id) {
-        return accountRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
-    }
+
 
     @DeleteMapping("/{id}")
     @Transactional
@@ -166,67 +159,65 @@ public class AccountController {
         if (!account.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("You cannot delete someone else's account");
         }
+
         if (deleteTransactions) {// Delete all transactions associated with the account
-            List<Transaction> transactionsToDelete = new ArrayList<>(account.getTransactions());
+            List<Transaction> transactionsToDelete =
+                    transactionRepository.findAll().stream()
+                            .filter(tx -> (tx.getFromAccount() != null && tx.getFromAccount().equals(account)) ||
+                                    ( tx.getToAccount() != null && tx.getToAccount().equals(account)))
+                            .collect(Collectors.toList());
+
             for (Transaction transaction : transactionsToDelete) {
-                transaction.getAccount().getTransactions().remove(transaction);
-                transaction.setAccount(null);
 
-                transaction.getLedger().getTransactions().remove(transaction);
-                transaction.setLedger(null);
+                if (transaction.getFromAccount() != null) {
+                    transaction.getFromAccount().getOutgoingTransactions().remove(transaction);
+                    transaction.setFromAccount(null);
+                }
 
-                transaction.getCategory().getTransactions().remove(transaction);
-                transaction.setCategory(null);
+                if (transaction.getToAccount() != null) {
+                    transaction.getToAccount().getIncomingTransactions().remove(transaction);
+                    transaction.setToAccount(null);
+                }
 
-                transactionRepository.save(transaction);
+                if (transaction.getLedger() != null) {
+                    transaction.getLedger().getTransactions().remove(transaction);
+                    transaction.setLedger(null);
+                }
+
+                if (transaction.getCategory() != null){
+                    transaction.getCategory().getTransactions().remove(transaction);
+                    transaction.setCategory(null);
+                }
+
                 transactionRepository.delete(transaction);
 
-                if(account instanceof BasicAccount) {
-                    user.setTotalAssets(
-                            user.calculateTotalAssets().subtract(account.getBalance())
-                    );
-                    user.setNetAssets(user.getTotalAssets().subtract(user.getTotalLiabilities()));
-                }else if(account instanceof CreditAccount){
-                    user.setTotalAssets(
-                            user.calculateTotalAssets().subtract(account.getBalance())
-                    );
-                    user.setTotalLiabilities(
-                            user.calculateTotalLiabilities().subtract(((CreditAccount) account).getCurrentDebt())
-                    );
-                    user.setNetAssets(user.getTotalAssets().subtract(user.getTotalLiabilities()));
-                }else{
-                    user.setTotalLiabilities(
-                            user.calculateTotalLiabilities().subtract(((LoanAccount) account).getRemainingAmount())
-                    );
-                    user.setNetAssets(user.getTotalAssets().subtract(user.getTotalLiabilities()));
-                }
             }
-            account.getTransactions().clear();
+
             accountRepository.delete(account);
+            user.getAccounts().remove(account);
+            userRepository.save(user);
             return ResponseEntity.ok("Account and associated transactions deleted successfully");
         } else {
             // If not deleting transactions, just disassociate them
-            for (Transaction transaction : account.getTransactions()) {
-                transaction.setAccount(null);
+            List<Transaction> transactionsToDisassociate =
+                    transactionRepository.findAll().stream()
+                            .filter(tx -> (tx.getFromAccount() != null && tx.getFromAccount().equals(account)) ||
+                                    ( tx.getToAccount() != null && tx.getToAccount().equals(account)))
+                            .collect(Collectors.toList());
+            for (Transaction transaction : transactionsToDisassociate) {
+                if(transaction.getFromAccount() != null) {
+                    transaction.setFromAccount(null);
+                }
+
+                if (transaction.getToAccount() != null) {
+                    transaction.setToAccount(null);
+                }
                 transactionRepository.save(transaction);
-                user.setTotalAssets(
-                        user.calculateTotalAssets().subtract(account.getBalance())
-                                .add(account.getTransactions().stream()
-                                        .filter(tx -> tx.getType() == TransactionType.INCOME)
-                                        .map(Transaction::getAmount)
-                                        .reduce(BigDecimal.ZERO, BigDecimal::add))
-                                .subtract(account.getTransactions().stream()
-                                        .filter(tx -> tx.getType() == TransactionType.EXPENSE)
-                                        .map(Transaction::getAmount)
-                                        .reduce(BigDecimal.ZERO, BigDecimal::add))
-                                .subtract(account.getTransactions().stream()
-                                        .filter(tx -> tx instanceof Transfer)
-                                        .filter(tx -> ((Transfer) tx).getToAccount().equals(account))
-                                        .map(Transaction::getAmount)
-                                        .reduce(BigDecimal.ZERO, BigDecimal::add))
-                );
             }
+
             accountRepository.delete(account);
+            user.getAccounts().remove(account);
+            userRepository.save(user);
             return ResponseEntity.ok("Account disassociated from transactions and deleted successfully");
         }
     }
@@ -279,7 +270,7 @@ public class AccountController {
         }
 
         BasicAccount basicAccount = (BasicAccount) account;
-        if(name!=null) {
+        if (name!=null) {
             basicAccount.setName(name);
         }
         if(balance !=null){
@@ -296,8 +287,8 @@ public class AccountController {
         }
 
         accountRepository.save(basicAccount);
-        basicAccount.getOwner().updateTotalAssets();
-        basicAccount.getOwner().updateNetAsset();
+        //basicAccount.getOwner().updateTotalAssets();
+        //basicAccount.getOwner().updateNetAsset();
         userRepository.save(basicAccount.getOwner());
         return ResponseEntity.ok("Account edited successfully");
     }
@@ -356,9 +347,6 @@ public class AccountController {
             creditAccount.setDueDay(dueDate);
         }
         accountRepository.save(creditAccount);
-        creditAccount.getOwner().updateTotalAssets();
-        creditAccount.getOwner().updateTotalLiabilities();
-        creditAccount.getOwner().updateNetAsset();
         userRepository.save(creditAccount.getOwner());
         return ResponseEntity.ok("Credit account edited successfully");
     }
@@ -394,15 +382,15 @@ public class AccountController {
         loanAccount.setNotes(notes);
         if(includedInNetAsset != null){loanAccount.setIncludedInNetAsset(includedInNetAsset);}
         if(totalPeriods != null){loanAccount.setTotalPeriods(totalPeriods);}
-        if(repaidPeriods != null){loanAccount.setRepaidPeriods(repaidPeriods);}
+        if(repaidPeriods != null){
+            loanAccount.setRepaidPeriods(repaidPeriods);
+        }
         if(annualInterestRate != null){loanAccount.setAnnualInterestRate(annualInterestRate);}
         if(loanAmount != null){loanAccount.setLoanAmount(loanAmount);}
         if(repaymentDate != null) {loanAccount.setRepaymentDate(repaymentDate);}
         if(repaymentType != null){loanAccount.setRepaymentType(repaymentType);}
+        ((LoanAccount) account).updateRemainingAmount();
         accountRepository.save(loanAccount);
-        loanAccount.getOwner().updateTotalAssets();
-        loanAccount.getOwner().updateTotalLiabilities();
-        loanAccount.getOwner().updateNetAsset();
         userRepository.save(loanAccount.getOwner());
         return ResponseEntity.ok("Loan account edited successfully");
     }
@@ -423,6 +411,11 @@ public class AccountController {
         if (!account.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("You cannot credit someone else's account");
         }
+
+        if(account instanceof LoanAccount){
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Cannot credit a loan account");
+        }
+
         account.credit(amount);
         accountRepository.save(account);
         return ResponseEntity.ok("credit account");
@@ -443,37 +436,53 @@ public class AccountController {
         if (!account.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("You cannot debit someone else's account");
         }
+
+        if(account instanceof LoanAccount){
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Cannot debit a loan account");
+        }
         account.debit(amount);
         accountRepository.save(account);
         return ResponseEntity.ok("debit account");
     }
 
-    //CreditAccount
+    //TODO
     @PutMapping("{id}/repay-debt")
     @Transactional
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> repayDebt(@PathVariable Long id,
                                             @RequestParam BigDecimal amount,
                                             @RequestParam(required = false) Long fromAccountId,
-                                            Principal principal) {
-
-        CreditAccount creditAccount = (CreditAccount) accountRepository.findById(id)
-                .orElseThrow(() -> new IllegalArgumentException("Credit account not found"));
-        Account fromAccount = (fromAccountId != null) ? accountRepository.findById(fromAccountId)
-                .orElse(null) : null;
+                                            Principal principal,
+                                            @RequestParam (required = false) Long ledgerId) {
 
         User user = userRepository.findByUsername(principal.getName());
         if (user == null) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
         }
+
+        CreditAccount creditAccount = (CreditAccount) accountRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Credit account not found"));
+
+        Account fromAccount = (fromAccountId != null) ? accountRepository.findById(fromAccountId)
+                .orElse(null) : null;
+
         if (!creditAccount.getOwner().getId().equals(user.getId()) || !fromAccount.getOwner().getId().equals(user.getId())) {
             throw new AccessDeniedException("You cannot repay debt");
         }
 
-        creditAccount.repayDebt(amount, fromAccount);
+        Ledger ledger=null;
+        if(ledgerId != null) {
+            ledger=ledgerRepository.findById(ledgerId).orElse(null);
+        }
+
+        creditAccount.repayDebt(amount, fromAccount, ledger);
+
         accountRepository.save(creditAccount);
         if (fromAccount != null) {
             accountRepository.save(fromAccount);
+        }
+        if(ledger != null){
+            ledgerRepository.save(ledger);
         }
         return ResponseEntity.ok("Debt repaid successfully");
     }
@@ -482,24 +491,42 @@ public class AccountController {
     @Transactional
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> repayInstallmentPlan(@PathVariable Long id,
-                                                       @RequestParam Long installmentPlanId, Principal principal) {
+                                                       @RequestParam Long installmentPlanId,
+                                                       Principal principal,
+                                                       @RequestParam (required = false) BigDecimal amount,
+                                                       @RequestParam (required = false) Long ledgerId) {
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
 
         CreditAccount account = (CreditAccount) accountRepository.findById(id)
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         InstallmentPlan installmentPlan = installmentPlanRepository.findById(installmentPlanId)
                 .orElseThrow(() -> new IllegalArgumentException("Installment plan not found"));
 
-        User user = userRepository.findByUsername(principal.getName());
-        if (user == null) {
-            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
-        }
-        if (!account.getOwner().getId().equals(user.getId()) || !account.getInstallmentPlans().contains(installmentPlan)) {
-            throw new AccessDeniedException("You cannot repay installment");
+        if (!account.getOwner().equals(user)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).body("You cannot repay someone else's installment plan");
         }
 
-        account.repayInstallmentPlan(installmentPlan);
+        if (!account.getInstallmentPlans().contains(installmentPlan)) {
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body("Installment plan does not belong to this account");
+        }
+        Ledger ledger=null;
+        if(ledgerId != null) {
+           ledger= ledgerRepository.findById(ledgerId).orElse(null);
+        }
+
+        if(amount != null){
+            account.repayInstallmentPlan(installmentPlan, amount, ledger);
+        }else {
+            account.repayInstallmentPlan(installmentPlan, ledger);
+        }
+        if(ledger != null){
+            ledgerRepository.save(ledger);
+        }
+
         accountRepository.save(account);
-        installmentPlanRepository.save(installmentPlan);
         return ResponseEntity.ok("Installment plan repaid successfully");
     }
 
@@ -509,7 +536,9 @@ public class AccountController {
     @PreAuthorize("hasRole('USER')")
     public ResponseEntity<String> repayLoan(@PathVariable Long id,
                                             @RequestParam(required = false) Long fromAccountId,
-                                            Principal principal) {
+                                            Principal principal,
+                                            @RequestParam (required = false) BigDecimal amount,
+                                            @RequestParam (required = false) Long ledgerId) {
         LoanAccount loanAccount = (LoanAccount) accountRepository.findById(id).orElse(null);
         if (loanAccount == null) {
             return ResponseEntity.status(HttpStatus.NOT_FOUND).body("Loan account not found");
@@ -518,14 +547,28 @@ public class AccountController {
         Account fromAccount = (fromAccountId != null) ? accountRepository.findById(fromAccountId).orElse(null) : null;
 
         User owner = userRepository.findByUsername(principal.getName());
-        if (owner == null || !loanAccount.getOwner().equals(owner) || !fromAccount.getOwner().equals(owner)) {
+
+        if (owner == null ) {
             return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("Unauthorized access");
         }
 
-        loanAccount.repayLoan(fromAccount);
+        Ledger ledger=null;
+        if(ledgerId != null) {
+            ledger=ledgerRepository.findById(ledgerId).orElse(null);
+        }
+
+        if(amount != null){
+            loanAccount.repayLoan(fromAccount, amount, ledger);
+        }else{
+            loanAccount.repayLoan(fromAccount, ledger);
+        }
+
         accountRepository.save(loanAccount);
         if (fromAccount != null) {
             accountRepository.save(fromAccount);
+        }
+        if(ledger != null){
+            ledgerRepository.save(ledger);
         }
         return ResponseEntity.ok("Loan repaid successfully");
     }
@@ -539,5 +582,4 @@ public class AccountController {
                 .orElseThrow(() -> new IllegalArgumentException("Account not found"));
         return account.getTransactionsForMonth(month);
     }
-
 }

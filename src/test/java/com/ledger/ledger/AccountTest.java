@@ -4,8 +4,6 @@ import com.ledger.ledger.domain.*;
 import com.ledger.ledger.domain.LedgerCategoryComponent;
 import com.ledger.ledger.repository.*;
 import jakarta.transaction.Transactional;
-import org.assertj.core.api.recursive.assertion.DefaultRecursiveAssertionIntrospectionStrategy;
-import org.assertj.core.api.recursive.assertion.RecursiveAssertionDriver;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -18,7 +16,7 @@ import org.springframework.test.web.servlet.MockMvc;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
-import java.util.Optional;
+import java.time.YearMonth;
 
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
@@ -94,7 +92,8 @@ public class AccountTest {
         Assertions.assertNotNull(createdAccount);
 
         User user = userRepository.findByUsername(testUser.getUsername());
-        Assertions.assertEquals(new BigDecimal("1000"), user.calculateTotalAssets());
+        Assertions.assertEquals(0, user.getTotalAssets().compareTo(new BigDecimal("1000")));
+        Assertions.assertEquals(1, user.getAccounts().size());
 
     }
 
@@ -119,13 +118,14 @@ public class AccountTest {
         Account createdAccount = accountRepository.findByName("Test Account");
         Assertions.assertNotNull(createdAccount);
 
-        Assertions.assertEquals(new BigDecimal("0"), ((CreditAccount)createdAccount).getCurrentDebt());
+        Assertions.assertEquals(0, ((CreditAccount)createdAccount).getCurrentDebt().compareTo(BigDecimal.ZERO));
         Assertions.assertNull(((CreditAccount)createdAccount).getBillDay());
         Assertions.assertNull(((CreditAccount)createdAccount).getDueDay());
 
         User updateUser= userRepository.findByUsername(testUser.getUsername());
-        Assertions.assertEquals(new BigDecimal("1000"), updateUser.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("0"), updateUser.getTotalLiabilities());
+        Assertions.assertEquals(1, updateUser.getAccounts().size());
+        Assertions.assertEquals(0, updateUser.getNetAssets().compareTo(new BigDecimal("1000")));
+        Assertions.assertEquals(0, updateUser.getTotalLiabilities().compareTo(BigDecimal.ZERO));
     }
 
     @Test
@@ -151,7 +151,7 @@ public class AccountTest {
                         .param("repaidPeriods", "1")
                         .param("annualInterestRate", "1")
                         .param("loanAmount", "100")
-                        .param("repaymentDate", "2025-08-19")
+                        .param("repaymentDate", "2025-08-01")
                         .param("repaymentType", "EQUAL_INTEREST"))
                 .andExpect(status().isOk())
                 .andExpect(content().string("Loan account created successfully"));
@@ -160,13 +160,39 @@ public class AccountTest {
         Assertions.assertNotNull(createdAccount);
 
         User updateUser= userRepository.findByUsername(testUser.getUsername());
-        Assertions.assertEquals(new BigDecimal("1100"), updateUser.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("98.70"), updateUser.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("1001.30"), updateUser.getNetAssets());
+        Assertions.assertEquals(2, updateUser.getAccounts().size());
+
+        Assertions.assertEquals(0, updateUser.getTotalAssets().compareTo(new BigDecimal("1000")));
+        Assertions.assertEquals(0, updateUser.getTotalLiabilities().compareTo(new BigDecimal("98.70")));
+        Assertions.assertEquals(0, updateUser.getNetAssets().compareTo(new BigDecimal("901.30")));
+
+        //test create LoanAccount without receiving account
+        mockMvc.perform(post("/accounts/create-loan-account")
+                        .param("accountName", "Test Account 1")
+                        .principal(() -> "Alice")
+                        .param("note", "Test note")
+                        .param("includedInNetAsset", "true")
+                        .param("totalPeriods", "36")
+                        .param("repaidPeriods", "0")
+                        .param("annualInterestRate", "1")
+                        .param("loanAmount", "100")
+                        .param("repaymentDate", "2025-08-01")
+                        .param("repaymentType", "EQUAL_INTEREST"))
+                .andExpect(status().isOk())
+                .andExpect(content().string("Loan account created successfully"));
+
+        Account createdAccount1 =accountRepository.findByName("Test Account 1");
+        Assertions.assertNotNull(createdAccount1);
+
+        User updateUser1= userRepository.findByUsername(testUser.getUsername());
+        Assertions.assertEquals(3, updateUser1.getAccounts().size());
+        Assertions.assertEquals(0, updateUser1.getTotalAssets().compareTo(new BigDecimal("1000")));
+        Assertions.assertEquals(0, updateUser1.getTotalLiabilities().compareTo(new BigDecimal("200.22")));
+        Assertions.assertEquals(0, updateUser1.getNetAssets().compareTo(new BigDecimal("799.78")));
     }
 
     @Test
-    @WithMockUser(username = "Alice") // Simulating an authenticated user
+    @WithMockUser(username = "Alice")
     public void testDeleteCreditAccountWithTransactions() throws Exception {
         Account account = new CreditAccount("Test Account",
                 BigDecimal.valueOf(1000),
@@ -193,6 +219,9 @@ public class AccountTest {
         installmentPlanRepository.save(installmentPlan);
         ((CreditAccount) account).addInstallmentPlan(installmentPlan);
 
+        ((CreditAccount) account).repayInstallmentPlan(installmentPlan, testLedger);
+        ((CreditAccount) account).repayDebt(BigDecimal.valueOf(50), null, testLedger);
+
         // Add transactions to the account
         Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, account, testLedger, foodCategory);
         Transaction transaction2 = new Income(LocalDate.now(), BigDecimal.valueOf(1500), null, account, testLedger, salaryCategory);
@@ -201,8 +230,15 @@ public class AccountTest {
 
         account.addTransaction(transaction1);
         account.addTransaction(transaction2);
+        testLedger.addTransaction(transaction1);
+        testLedger.addTransaction(transaction2);
+        foodCategory.addTransaction(transaction1);
+        salaryCategory.addTransaction(transaction2);
 
         accountRepository.save(account);
+        ledgerRepository.save(testLedger);
+        ledgerCategoryComponentRepository.save(foodCategory);
+        ledgerCategoryComponentRepository.save(salaryCategory);
 
         mockMvc.perform(delete("/accounts/" + account.getId())
                         .param("deleteTransactions", "true")
@@ -213,10 +249,15 @@ public class AccountTest {
         Account deletedAccount1 = accountRepository.findById(account.getId()).orElse(null);
         Assertions.assertNull(deletedAccount1);
 
+        Ledger updatedLedger = ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedLedger.getTransactions().size());
+        Assertions.assertEquals(0, updatedLedger.getTotalIncomeForMonth(YearMonth.now()).compareTo(BigDecimal.ZERO));
+        Assertions.assertEquals(0, updatedLedger.getTotalExpenseForMonth(YearMonth.now()).compareTo(BigDecimal.ZERO));
+
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(0, updatedUser.getTotalAssets().intValue());
-        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().intValue());
-        Assertions.assertEquals(0, updatedUser.getNetAssets().intValue());
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(BigDecimal.ZERO));
+        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(BigDecimal.ZERO));
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(BigDecimal.ZERO));
 
         InstallmentPlan plan = installmentPlanRepository.findById(installmentPlan.getId()).orElse(null);
         Assertions.assertNull(plan);
@@ -227,9 +268,11 @@ public class AccountTest {
         Transaction deletedTransaction2 = transactionRepository.findById(transaction2.getId()).orElse(null);
         Assertions.assertNull(deletedTransaction2);
 
-        Assertions.assertEquals(0, transactionRepository.findByLedgerId(testLedger.getId()).size());
-        Assertions.assertEquals(0, transactionRepository.findByCategoryId(foodCategory.getId()).size());
-        Assertions.assertEquals(0, transactionRepository.findByCategoryId(salaryCategory.getId()).size());
+        LedgerCategoryComponent updatedFoodCategory = ledgerCategoryComponentRepository.findById(foodCategory.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedFoodCategory.getTransactions().size());
+        LedgerCategoryComponent updatedSalaryCategory = ledgerCategoryComponentRepository.findById(salaryCategory.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedSalaryCategory.getTransactions().size());
+
     }
 
     @Test
@@ -260,6 +303,9 @@ public class AccountTest {
         installmentPlanRepository.save(installmentPlan);
         ((CreditAccount) account).addInstallmentPlan(installmentPlan);
 
+        ((CreditAccount) account).repayInstallmentPlan(installmentPlan, testLedger);
+        ((CreditAccount) account).repayDebt(BigDecimal.valueOf(50), null, testLedger);
+
         // Add transactions to the account
         Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, account, testLedger, foodCategory);
         Transaction transaction2 = new Income(LocalDate.now(), BigDecimal.valueOf(1500), null, account, testLedger, salaryCategory);
@@ -268,8 +314,15 @@ public class AccountTest {
 
         account.addTransaction(transaction1);
         account.addTransaction(transaction2);
+        testLedger.addTransaction(transaction1);
+        testLedger.addTransaction(transaction2);
+        foodCategory.addTransaction(transaction1);
+        salaryCategory.addTransaction(transaction2);
 
         accountRepository.save(account);
+        ledgerRepository.save(testLedger);
+        ledgerCategoryComponentRepository.save(foodCategory);
+        ledgerCategoryComponentRepository.save(salaryCategory);
 
         mockMvc.perform(delete("/accounts/" + account.getId())
                         .param("deleteTransactions", "false")
@@ -280,13 +333,18 @@ public class AccountTest {
         Account deletedAccount = accountRepository.findById(account.getId()).orElse(null); //cerca account da database
         Assertions.assertNull(deletedAccount);
 
+        Ledger updatedLedger = ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(4, updatedLedger.getTransactions().size());
+        Assertions.assertEquals(0, updatedLedger.getTotalIncomeForMonth(YearMonth.now()).compareTo(BigDecimal.valueOf(1500)));
+        Assertions.assertEquals(0, updatedLedger.getTotalExpenseForMonth(YearMonth.now()).compareTo(BigDecimal.valueOf(10)));
+
         InstallmentPlan plan = installmentPlanRepository.findById(installmentPlan.getId()).orElse(null);
         Assertions.assertNull(plan);
 
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1490")));
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(BigDecimal.ZERO));
         Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(BigDecimal.ZERO));
-        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("1490")));
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(BigDecimal.ZERO));
 
         Transaction updatedTransaction1 = transactionRepository.findById(transaction1.getId()).orElse(null);
         Assertions.assertNotNull(updatedTransaction1);
@@ -294,13 +352,12 @@ public class AccountTest {
         Transaction updatedTransaction2 = transactionRepository.findById(transaction2.getId()).orElse(null);
         Assertions.assertNotNull(updatedTransaction2);
 
-        Assertions.assertEquals(2, transactionRepository.findByLedgerId(testLedger.getId()).size());
-        Assertions.assertEquals(1, transactionRepository.findByCategoryId(foodCategory.getId()).size());
-        Assertions.assertEquals(1, transactionRepository.findByCategoryId(salaryCategory.getId()).size());
+        LedgerCategoryComponent updatedFoodCategory = ledgerCategoryComponentRepository.findById(foodCategory.getId()).orElse(null);
+        Assertions.assertEquals(1, updatedFoodCategory.getTransactions().size());
+        LedgerCategoryComponent updatedSalaryCategory = ledgerCategoryComponentRepository.findById(salaryCategory.getId()).orElse(null);
+        Assertions.assertEquals(1, updatedSalaryCategory.getTransactions().size());
     }
 
-
-    //TODO: test delete LoanAccount
     @Test
     @WithMockUser(username = "Alice")
     public void testDeleteLoanAccountWithTransactions() throws Exception{
@@ -328,6 +385,12 @@ public class AccountTest {
         );
         accountRepository.save(account);
 
+        ((LoanAccount) account).repayLoan(null, testLedger);
+        ((LoanAccount) account).repayLoan(receivingAccount, testLedger);
+
+        accountRepository.save(account);
+        accountRepository.save(receivingAccount);
+        ledgerRepository.save(testLedger);
 
         mockMvc.perform(delete("/accounts/" + account.getId())
                         .param("deleteTransactions", "true")
@@ -338,10 +401,18 @@ public class AccountTest {
         Account deletedAccount = accountRepository.findById(account.getId()).orElse(null);
         Assertions.assertNull(deletedAccount);
 
+        Account updatedReceivingAccount = accountRepository.findById(receivingAccount.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedReceivingAccount.getTransactions().size());
+
+
+        Ledger updatedLedger = ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedLedger.getTransactions().size());
+
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1000")));
-        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().intValue());
-        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("1000")));
+
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("997.18")));
+        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(BigDecimal.ZERO));
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("997.18")));
     }
 
     @Test
@@ -372,16 +443,12 @@ public class AccountTest {
         accountRepository.save(account);
         //remaing loan amount should be 98.70
 
-        // Add transactions to the account
-        Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, account, testLedger, foodCategory);
-        Transaction transaction2 = new Income(LocalDate.now(), BigDecimal.valueOf(1500), null, account, testLedger, salaryCategory);
-        transactionRepository.save(transaction1);
-        transactionRepository.save(transaction2);
-
-        account.addTransaction(transaction1);
-        account.addTransaction(transaction2);
+        ((LoanAccount) account).repayLoan(null, testLedger);
+        ((LoanAccount) account).repayLoan(receivingAccount, testLedger);
 
         accountRepository.save(account);
+        accountRepository.save(receivingAccount);
+        ledgerRepository.save(testLedger);
 
         mockMvc.perform(delete("/accounts/" + account.getId())
                         .param("deleteTransactions", "false")
@@ -392,10 +459,16 @@ public class AccountTest {
         Account deletedAccount = accountRepository.findById(account.getId()).orElse(null); //cerca account da database
         Assertions.assertNull(deletedAccount);
 
+        Account updatedReceivingAccount = accountRepository.findById(receivingAccount.getId()).orElse(null);
+        Assertions.assertEquals(1, updatedReceivingAccount.getTransactions().size());
+
+        Ledger updatedLedger = ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(2, updatedLedger.getTransactions().size());
+
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1490")));
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("997.18")));
         Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(new BigDecimal("0")));
-        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("1490")));
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("997.18")));
     }
 
     @Test
@@ -420,8 +493,15 @@ public class AccountTest {
 
         account.addTransaction(transaction1);
         account.addTransaction(transaction2);
+        testLedger.addTransaction(transaction1);
+        testLedger.addTransaction(transaction2);
+        foodCategory.addTransaction(transaction1);
+        salaryCategory.addTransaction(transaction2);
 
         accountRepository.save(account);
+        ledgerRepository.save(testLedger);
+        ledgerCategoryComponentRepository.save(foodCategory);
+        ledgerCategoryComponentRepository.save(salaryCategory);
 
         mockMvc.perform(delete("/accounts/" + account.getId())
                         .param("deleteTransactions", "true")
@@ -433,7 +513,10 @@ public class AccountTest {
         Assertions.assertNull(deletedAccount);
 
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(0, updatedUser.getTotalAssets().intValue());
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(BigDecimal.ZERO));
+
+        Ledger updatedLedger = ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedLedger.getTransactions().size());
 
         Transaction deletedTransaction1 = transactionRepository.findById(transaction1.getId()).orElse(null);
         Assertions.assertNull(deletedTransaction1);
@@ -441,9 +524,11 @@ public class AccountTest {
         Transaction deletedTransaction2 = transactionRepository.findById(transaction2.getId()).orElse(null);
         Assertions.assertNull(deletedTransaction2);
 
-        Assertions.assertEquals(0, transactionRepository.findByLedgerId(testLedger.getId()).size());
-        Assertions.assertEquals(0, transactionRepository.findByCategoryId(foodCategory.getId()).size());
-        Assertions.assertEquals(0, transactionRepository.findByCategoryId(salaryCategory.getId()).size());
+        LedgerCategoryComponent updatedFoodCategory = ledgerCategoryComponentRepository.findById(foodCategory.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedFoodCategory.getTransactions().size());
+
+        LedgerCategoryComponent updatedSalaryCategory = ledgerCategoryComponentRepository.findById(salaryCategory.getId()).orElse(null);
+        Assertions.assertEquals(0, updatedSalaryCategory.getTransactions().size());
     }
 
     @Test
@@ -468,8 +553,15 @@ public class AccountTest {
 
         account.addTransaction(transaction1);
         account.addTransaction(transaction2);
+        testLedger.addTransaction(transaction1);
+        testLedger.addTransaction(transaction2);
+        foodCategory.addTransaction(transaction1);
+        salaryCategory.addTransaction(transaction2);
 
         accountRepository.save(account);
+        ledgerRepository.save(testLedger);
+        ledgerCategoryComponentRepository.save(foodCategory);
+        ledgerCategoryComponentRepository.save(salaryCategory);
 
         mockMvc.perform(delete("/accounts/" + account.getId())
                         .param("deleteTransactions", "false")
@@ -481,7 +573,13 @@ public class AccountTest {
         Assertions.assertNull(deletedAccount);
 
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1490")));
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(BigDecimal.ZERO));
+
+        Ledger updatedLedger = ledgerRepository.findById(testLedger.getId()).orElse(null);
+        Assertions.assertEquals(2, updatedLedger.getTransactions().size());
+
+        Assertions.assertEquals(0, updatedLedger.getTotalIncomeForMonth(YearMonth.now()).compareTo(BigDecimal.valueOf(1500)));
+        Assertions.assertEquals(0, updatedLedger.getTotalExpenseForMonth(YearMonth.now()).compareTo(BigDecimal.valueOf(10)));
 
         Transaction updatedTransaction1 = transactionRepository.findById(transaction1.getId()).orElse(null);
         Assertions.assertNotNull(updatedTransaction1);
@@ -489,11 +587,11 @@ public class AccountTest {
         Transaction updatedTransaction2 = transactionRepository.findById(transaction2.getId()).orElse(null);
         Assertions.assertNotNull(updatedTransaction2);
 
-        Assertions.assertEquals(2, transactionRepository.findByLedgerId(testLedger.getId()).size());
+        LedgerCategoryComponent updatedFoodCategory = ledgerCategoryComponentRepository.findById(foodCategory.getId()).orElse(null);
+        Assertions.assertEquals(1, updatedFoodCategory.getTransactions().size());
 
-        Assertions.assertEquals(1, transactionRepository.findByCategoryId(foodCategory.getId()).size());
-
-        Assertions.assertEquals(1, transactionRepository.findByCategoryId(salaryCategory.getId()).size());
+        LedgerCategoryComponent updatedSalaryCategory = ledgerCategoryComponentRepository.findById(salaryCategory.getId()).orElse(null);
+        Assertions.assertEquals(1, updatedSalaryCategory.getTransactions().size());
 
     }
 
@@ -617,9 +715,9 @@ public class AccountTest {
         Assertions.assertFalse(updatedAccount.getSelectable());
 
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(new BigDecimal("1500"), updatedUser.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("10"), updatedUser.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("1490"), updatedUser.getNetAssets());
+        Assertions.assertEquals(0, updatedUser.getTotalAssets().compareTo(new BigDecimal("1500")));
+        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(new BigDecimal("10")));
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("1490")));
     }
 
     @Test
@@ -655,7 +753,7 @@ public class AccountTest {
                 .andExpect(content().string("Loan account edited successfully"));
 
         Account updatedAccount = accountRepository.findById(account.getId()).orElse(null);
-        Assertions.assertNotNull(updatedAccount);
+        Assertions.assertEquals(0, ((LoanAccount) updatedAccount).getRemainingAmount().compareTo(new BigDecimal("98.70")));
 
         Assertions.assertEquals(1, ((LoanAccount) updatedAccount).getRepaidPeriods());
 
@@ -671,8 +769,8 @@ public class AccountTest {
 
         User updatedUser = userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(0, updatedUser.getTotalAssets().intValue());
-        Assertions.assertEquals(new BigDecimal("98.70"), updatedUser.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("-98.70"), updatedUser.getNetAssets());
+        Assertions.assertEquals(0, updatedUser.getTotalLiabilities().compareTo(new BigDecimal("98.70")));
+        Assertions.assertEquals(0, updatedUser.getNetAssets().compareTo(new BigDecimal("-98.70")));
     }
 
     @Test
@@ -797,15 +895,15 @@ public class AccountTest {
 
         Account updateAccount2=accountRepository.findByName("account2");
         Assertions.assertNotNull(updateAccount2);
-        Assertions.assertEquals(new BigDecimal("0"), updateAccount2.getBalance());
-        Assertions.assertEquals(new BigDecimal("10"), ((CreditAccount)updateAccount2).getCurrentDebt());
+        Assertions.assertEquals(0, updateAccount2.getBalance().compareTo(BigDecimal.ZERO));
+        Assertions.assertEquals(0, ((CreditAccount)updateAccount2).getCurrentDebt().compareTo(new BigDecimal("10")));
 
         User updateUser=userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(new BigDecimal("990"), updateUser.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("10"), updateUser.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("980"), updateUser.getNetAssets());
+        Assertions.assertEquals(0, updateUser.getTotalAssets().compareTo(new BigDecimal("990")));
+        Assertions.assertEquals(0, updateUser.getTotalLiabilities().compareTo(new BigDecimal("10")));
+        Assertions.assertEquals(0, updateUser.getNetAssets().compareTo(new BigDecimal("980")));
 
-        //test credit LoanAccount
+        //test debit LoanAccount
         Account loanAccount = new LoanAccount("account3",
                 testUser,
                 null,
@@ -828,7 +926,6 @@ public class AccountTest {
                 .andExpect(content().string("Cannot debit a loan account"));
     }
 
-    //TODO: test repayDebt with LoanAccount
     @Test
     @WithMockUser(username = "Alice")
     public void testRepayDebt() throws Exception{
@@ -857,6 +954,7 @@ public class AccountTest {
                 testUser);
         accountRepository.save(fromAccount);
 
+        //test repayDebt without ledger
         mockMvc.perform(put("/accounts/" + creditAccount.getId() + "/repay-debt")
                         .param("amount", "50")
                         .param("fromAccountId", fromAccount.getId().toString())
@@ -866,16 +964,17 @@ public class AccountTest {
 
         Account updateCreditAccount=accountRepository.findByName("account2");
         Assertions.assertNotNull(updateCreditAccount);
-        Assertions.assertEquals(new BigDecimal("50"), ((CreditAccount)updateCreditAccount).getCurrentDebt());
+        Assertions.assertEquals(0, ((CreditAccount)updateCreditAccount).getCurrentDebt().compareTo(new BigDecimal("50")));
+        Assertions.assertEquals(1, updateCreditAccount.getTransactions().size());
 
         Account updateFromAccount=accountRepository.findByName("from account");
-        Assertions.assertNotNull(updateFromAccount);
         Assertions.assertEquals(new BigDecimal("150"), updateFromAccount.getBalance());
+        Assertions.assertEquals(1, updateFromAccount.getTransactions().size());
 
         User updateUser=userRepository.findById(testUser.getId()).orElse(null);
-        Assertions.assertEquals(new BigDecimal("1150"), updateUser.getTotalAssets());
-        Assertions.assertEquals(new BigDecimal("50"), updateUser.getTotalLiabilities());
-        Assertions.assertEquals(new BigDecimal("1100"), updateUser.getNetAssets());
+        Assertions.assertEquals(0, updateUser.getTotalAssets().compareTo(new BigDecimal("1150")));
+        Assertions.assertEquals(0, updateUser.getTotalLiabilities().compareTo(new BigDecimal("50")));
+        Assertions.assertEquals(0, updateUser.getNetAssets().compareTo(new BigDecimal("1100")));
     }
 
     @Test
@@ -909,7 +1008,7 @@ public class AccountTest {
         ((CreditAccount) creditAccount).addInstallmentPlan(installmentPlan);
         accountRepository.save(creditAccount);
 
-
+        //test repayInstallmentPlan with no specific amount
         mockMvc.perform(put("/accounts/" + creditAccount.getId() + "/repay-installment-plan")
                         .param("installmentPlanId", installmentPlan.getId().toString())
                         .principal(() -> "Alice")
@@ -919,9 +1018,10 @@ public class AccountTest {
                 .andExpect(content().string("Installment plan repaid successfully"));
 
         Account updateCreditAccount=accountRepository.findByName("account2");
-        Assertions.assertEquals(new BigDecimal("1000.00"), ((CreditAccount)updateCreditAccount).getCurrentDebt());
+        Assertions.assertEquals(0, ((CreditAccount) updateCreditAccount).getCurrentDebt().compareTo(new BigDecimal("1000.00")));
+        Assertions.assertEquals(0, updateCreditAccount.getBalance().compareTo(new BigDecimal("900.00")));
         Assertions.assertEquals(2, ((CreditAccount)updateCreditAccount).getInstallmentPlans().get(0).getPaidPeriods());
-        Assertions.assertEquals(1, ((CreditAccount)updateCreditAccount).getTransactions().size());
+        Assertions.assertEquals(1, updateCreditAccount.getTransactions().size());
 
         Ledger updateLedger=ledgerRepository.findById(testLedger.getId()).orElse(null);
         Assertions.assertEquals(1, updateLedger.getTransactions().size());
@@ -999,9 +1099,11 @@ public class AccountTest {
         Account updateLoanAccount=accountRepository.findByName("account2");
         Assertions.assertEquals(2, ((LoanAccount)updateLoanAccount).getRepaidPeriods());
         Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount).getRemainingAmount().compareTo(new BigDecimal("95.88")));
+        Assertions.assertEquals(1, updateLoanAccount.getTransactions().size());
 
         Account updateFromAccount=accountRepository.findByName("from account");
         Assertions.assertEquals(0, updateFromAccount.getBalance().compareTo(new BigDecimal("1997.18")));
+        Assertions.assertEquals(1, updateFromAccount.getTransactions().size());
 
         User updateUser=userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(0, updateUser.getTotalAssets().compareTo(new BigDecimal("1997.18")));
@@ -1022,15 +1124,16 @@ public class AccountTest {
 
         Account updateLoanAccount2=accountRepository.findByName("account2");
         Assertions.assertEquals(12, ((LoanAccount)updateLoanAccount2).getRepaidPeriods());
-        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount2).getRemainingAmount().compareTo(new BigDecimal("67.68")));
+        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount2).getRemainingAmount().compareTo(new BigDecimal("67.38")));
+
 
         Account updateFromAccount2=accountRepository.findByName("from account");
         Assertions.assertEquals(0, updateFromAccount2.getBalance().compareTo(new BigDecimal("1968.68")));
 
         User updateUser2=userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(0, updateUser2.getTotalAssets().compareTo(new BigDecimal("1968.68")));
-        Assertions.assertEquals(0, updateUser2.getTotalLiabilities().compareTo(new BigDecimal("67.68")));
-        Assertions.assertEquals(0, updateUser2.getNetAssets().compareTo(new BigDecimal("1901.00")));
+        Assertions.assertEquals(0, updateUser2.getTotalLiabilities().compareTo(new BigDecimal("67.38")));
+        Assertions.assertEquals(0, updateUser2.getNetAssets().compareTo(new BigDecimal("1901.30")));
 
         //repayLoan with specific amount and no fromAccountId
         mockMvc.perform(put("/accounts/" + loanAccount.getId() + "/repay-loan")
@@ -1043,12 +1146,16 @@ public class AccountTest {
 
         Account updateLoanAccount3=accountRepository.findByName("account2");
         Assertions.assertEquals(33, ((LoanAccount)updateLoanAccount3).getRepaidPeriods());
-        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount3).getRemainingAmount().compareTo(new BigDecimal("8.46")));
+        Assertions.assertEquals(0, ((LoanAccount)updateLoanAccount3).getRemainingAmount().compareTo(new BigDecimal("7.38")));
+
+        Account updateFromAccount3=accountRepository.findByName("from account");
+        Assertions.assertEquals(0, updateFromAccount3.getBalance().compareTo(new BigDecimal("1968.68")));
+        Assertions.assertEquals(2, updateFromAccount3.getTransactions().size());
 
         User updateUser3=userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(0, updateUser3.getTotalAssets().compareTo(new BigDecimal("1968.68")));
-        Assertions.assertEquals(0, updateUser3.getTotalLiabilities().compareTo(new BigDecimal("8.46")));
-        Assertions.assertEquals(0, updateUser3.getNetAssets().compareTo(new BigDecimal("1960.22")));
+        Assertions.assertEquals(0, updateUser3.getTotalLiabilities().compareTo(new BigDecimal("7.38")));
+        Assertions.assertEquals(0, updateUser3.getNetAssets().compareTo(new BigDecimal("1961.30")));
 
 
     }
