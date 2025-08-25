@@ -36,9 +36,6 @@ public abstract class Account {
     @JoinColumn(name = "owner_id", nullable = false)
     protected User owner;
 
-    //@JoinColumn(name = "currency_id")
-    //@Transient
-    //protected Currency currency;
 
     @Column(length = 500)
     protected String notes;
@@ -46,8 +43,12 @@ public abstract class Account {
     @Column(name = "is_hidden", nullable = false)
     protected Boolean hidden=false;
 
-    @OneToMany(mappedBy = "account",cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = false)
-    protected List<Transaction> transactions = new ArrayList<>(); //account -> più transazioni. relazione tra Account e Transaction è aggregazione
+    @OneToMany(mappedBy = "fromAccount", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = false)
+    protected List<Transaction> outgoingTransactions = new ArrayList<>();
+
+    @OneToMany(mappedBy = "toAccount", cascade = {CascadeType.PERSIST, CascadeType.MERGE}, orphanRemoval = false)
+    protected List<Transaction> incomingTransactions = new ArrayList<>();
+
 
     @Column(name = "included_in_net_asset", nullable = false)
     protected Boolean includedInNetAsset = true;
@@ -78,22 +79,40 @@ public abstract class Account {
 
     public void credit(BigDecimal amount) {
         balance = balance.add(amount);
-        owner.updateTotalAssets();
-        owner.updateNetAsset();
     }
     public abstract void debit(BigDecimal amount);
     public void hide() {
         this.hidden = true;
-        this.owner.updateTotalAssets();
-        this.owner.updateNetAsset();
-        this.owner.updateTotalLiabilities();
     }
     public void addTransaction(Transaction transaction) {
-        transactions.add(transaction);
+        if(transaction instanceof Income){
+            incomingTransactions.add(transaction);
+        } else if (transaction instanceof Expense) {
+            outgoingTransactions.add(transaction);
+        } else if (transaction instanceof Transfer) {
+
+            if ((transaction.getFromAccount() != null && transaction.getFromAccount().equals(this))) {
+                outgoingTransactions.add(transaction);
+            }
+            if (transaction.getToAccount() != null &&  transaction.getToAccount().equals(this)) {
+                incomingTransactions.add(transaction);
+            }
+        }
         transaction.execute();
     }
     public void removeTransaction(Transaction transaction) {
-        transactions.remove(transaction);
+        if(transaction instanceof Income){
+            incomingTransactions.remove(transaction);
+        } else if (transaction instanceof Expense) {
+            outgoingTransactions.remove(transaction);
+        } else if (transaction instanceof Transfer) {
+            if ((transaction.getFromAccount() != null && transaction.getFromAccount().equals(this))) {
+                outgoingTransactions.remove(transaction);
+            }
+            if (transaction.getToAccount() != null &&  transaction.getToAccount().equals(this)) {
+                incomingTransactions.remove(transaction);
+            }
+        }
         transaction.rollback();
     }
 
@@ -106,9 +125,6 @@ public abstract class Account {
     public void setOwner(User owner) {
         this.owner = owner;
     }
-    /*public void setCurrencyCode(Currency currency) {
-        this.currency = currency;
-    }*/
     public void setId(Long id) {
         this.id = id;
     }
@@ -123,8 +139,6 @@ public abstract class Account {
             throw new IllegalArgumentException("Balance cannot be negative.");
         }
         this.balance = balance;
-        this.owner.updateTotalAssets();
-        this.owner.updateNetAsset();
     }
 
     public AccountType getType() { return type; }
@@ -137,10 +151,17 @@ public abstract class Account {
     public User getOwner() {
         return owner;
     }
-    public List<Transaction> getTransactions() { //ritorna tutte le transazioni associate a questo account
-        return transactions.stream()
-                .sorted(Comparator.comparing(Transaction::getDate).reversed())
-                .collect(Collectors.toList());
+    public List<Transaction> getTransactions() {
+        List<Transaction> allTransactions = new ArrayList<>();
+        allTransactions.addAll(incomingTransactions);
+        allTransactions.addAll(outgoingTransactions);
+        return allTransactions;
+    }
+    public List<Transaction> getIncomingTransactions() {
+        return incomingTransactions;
+    }
+    public List<Transaction> getOutgoingTransactions() {
+        return outgoingTransactions;
     }
     public BigDecimal getBalance() {
         return this.balance;
@@ -162,7 +183,7 @@ public abstract class Account {
     }
 
     public List<Transaction> getTransactionsForMonth(YearMonth month) {
-        return transactions.stream()
+        return getTransactions().stream()
                 .filter(t -> t.getDate().getYear() == month.getYear() && t.getDate().getMonth() == month.getMonth())
                 .sorted(Comparator.comparing(Transaction::getDate).reversed())
                 .collect(Collectors.toList());
@@ -182,7 +203,7 @@ public abstract class Account {
                 .filter(tx -> tx.getType() == TransactionType.EXPENSE
                         || (tx.getType() == TransactionType.TRANSFER
                         && tx instanceof Transfer
-                        && ((Transfer) tx).getAccount().equals(this)))
+                        && ((Transfer) tx).getFromAccount().equals(this)))
                 .map(Transaction::getAmount)
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }

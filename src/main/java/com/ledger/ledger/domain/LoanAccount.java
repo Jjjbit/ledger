@@ -76,8 +76,10 @@ public class LoanAccount extends Account {
         }else{
             this.repaymentType = repaymentType;
         }
-        this.remainingAmount=calculateRemainingLoanAmount();
-        this.owner.addAccount(this);
+        this.remainingAmount= calculateRemainingLoanAmountWithRepaidPeriods();
+        if (this.owner != null) {
+            this.owner.getAccounts().add(this);
+        }
     }
 
     public void setTotalPeriods(int totalPeriods) {
@@ -88,6 +90,9 @@ public class LoanAccount extends Account {
     }
     public void setRemainingAmount(BigDecimal remainingAmount) {
         this.remainingAmount = remainingAmount;
+    }
+    public void updateRemainingAmount() {
+        this.remainingAmount = calculateRemainingLoanAmountWithRepaidPeriods();
     }
     public BigDecimal getRemainingAmount() {
         return remainingAmount;
@@ -153,21 +158,19 @@ public class LoanAccount extends Account {
                     getMonthlyRepayment(repaidPeriods + 1),
                     ledger
             );
-            transactions.add(repaymentTransaction);
+            //transactions.add(repaymentTransaction);
+            incomingTransactions.add(repaymentTransaction);
+            repaymentTransaction.execute();
+
             if (ledger != null){
                 ledger.getTransactions().add(repaymentTransaction);
             }
             if(fromAccount != null){
-                fromAccount.getTransactions().add(repaymentTransaction);
+                fromAccount.outgoingTransactions.add(repaymentTransaction);
             }
-            repaymentTransaction.execute();
 
             this.repaidPeriods = this.repaidPeriods + 1;
-            this.remainingAmount=calculateRemainingLoanAmount();
-
-            owner.updateTotalAssets();
-            owner.updateTotalLiabilities();
-            owner.updateNetAsset();
+            this.remainingAmount= calculateRemainingLoanAmountWithRepaidPeriods();
 
             checkAndUpdateStatus();
         }else{
@@ -185,14 +188,14 @@ public class LoanAccount extends Account {
                     amount,
                     ledger
             );
-            transactions.add(repaymentTransaction);
+            //transactions.add(repaymentTransaction);
+            incomingTransactions.add(repaymentTransaction);
             repaymentTransaction.execute();
             if (ledger != null){
                 ledger.getTransactions().add(repaymentTransaction);
             }
             if(fromAccount != null){
-                fromAccount.getTransactions().add(repaymentTransaction);
-
+                fromAccount.outgoingTransactions.add(repaymentTransaction);
             }
             //calculate how many periods are repaid
             BigDecimal paidAmount = BigDecimal.ZERO;
@@ -207,20 +210,17 @@ public class LoanAccount extends Account {
                 }
             }
             this.repaidPeriods += periodsPaid;
-            //this.remainingAmount=remainingAmount.subtract(amount).setScale(2, RoundingMode.HALF_UP);
-            remainingAmount = calculateRemainingLoanAmount();
-
-            owner.updateTotalAssets();
-            owner.updateTotalLiabilities();
-            owner.updateNetAsset();
-
+            remainingAmount = remainingAmount.subtract(amount).setScale(2, RoundingMode.HALF_UP); //remainingAmount dipende da amount pagato
+            if (remainingAmount.compareTo(BigDecimal.ZERO) < 0) {
+                remainingAmount = BigDecimal.ZERO;
+            }
             checkAndUpdateStatus();
         }else{
             throw new IllegalStateException("All periods have already been paid.");
         }
     }
 
-    public BigDecimal calculateRemainingLoanAmount() {
+    private BigDecimal calculateRemainingLoanAmountWithRepaidPeriods() { //dipende da repaidPeriods
         BigDecimal total = BigDecimal.ZERO;
         for (int i = repaidPeriods + 1; i <= totalPeriods; i++) {
             total = total.add(getMonthlyRepayment(i));

@@ -22,15 +22,13 @@ public class BasicAccount extends Account {
     ) {
         super(name, balance, type,category, owner, note, includedInNetWorth, selectable);
         if (this.owner != null) {
-            this.owner.addAccount(this);
+            this.owner.getAccounts().add(this);
         }
     }
 
     @Override
     public void debit(BigDecimal amount) {
         this.balance = this.balance.subtract(amount);
-        owner.updateTotalAssets();
-        owner.updateNetAsset();
     }
 
 }
