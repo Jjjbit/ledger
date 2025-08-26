@@ -151,7 +151,6 @@ public class LedgerCategoryComponentController {
         return ResponseEntity.ok("Include in budget set successfully");
     }
 
-    //TODO testare se cancella bene le transazioni e i budget associati
     @DeleteMapping("/{id}/delete")
     @Transactional
     @PreAuthorize("hasRole('USER')")
