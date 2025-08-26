@@ -5,7 +5,9 @@ import jakarta.persistence.*;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Entity
 @Inheritance(strategy= InheritanceType.SINGLE_TABLE)
@@ -27,6 +29,9 @@ public abstract class LedgerCategoryComponent {
 
     @OneToMany(mappedBy = "category", cascade = CascadeType.ALL, orphanRemoval = true)
     private List<Budget> budgets = new ArrayList<>();
+
+    @Column(name = "included_in_budget", nullable = false)
+    protected boolean includedInBudget=true;
 
     @ManyToOne
     @JoinColumn(name = "parent_id")
@@ -56,6 +61,7 @@ public abstract class LedgerCategoryComponent {
     public void setLedger (Ledger ledger){this.ledger=ledger;}
     public void setName(String name){this.name=name;}
     public void setType(CategoryType type){this.type=type;}
+    public void setIncludedInBudget(boolean included){this.includedInBudget=included;}
     public String getName() {
         return name;
     }
@@ -83,7 +89,6 @@ public abstract class LedgerCategoryComponent {
         return transactions.stream()
                 .filter(t -> switch (period) {
                     case MONTHLY -> t.getDate().isBefore(startDate.plusMonths(1));
-                    case WEEKLY -> t.getDate().isBefore(startDate.plusWeeks(1));
                     case YEARLY -> t.getDate().isBefore(startDate.plusYears(1));
                 })
                 .toList();
@@ -104,8 +109,34 @@ public abstract class LedgerCategoryComponent {
                 .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 
-    public abstract List<Transaction> getTransactions();
+    public List<Transaction> getTransactions(){
+        return transactions;
+    }
 
     public abstract void printTransactionSummary();
+
+    public BigDecimal getCategoryBudgets(Budget.Period period) {
+        return budgets.stream()
+                .filter(b -> b.getPeriod().equals(period))
+                .filter(b -> b.isInPeriod(LocalDate.now()))
+                .map(Budget::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public BigDecimal getCategorySpendingInPeriod(User user, Budget.Period period) {
+        return budgets.stream()
+                .filter(b -> b.getOwner().equals(user))
+                .filter(b -> b.getPeriod().equals(period))
+                .filter(b -> b.isInPeriod(LocalDate.now()))
+                .flatMap(b -> b.getCategory().getTransactions().stream()) //category di tipo expense e transactions di tipo expense
+                .map(Transaction::getAmount)
+                .reduce(BigDecimal.ZERO, BigDecimal::add);
+    }
+
+    public boolean isOverBudgetForCategory(User user, Budget.Period period, LedgerCategoryComponent category) {
+        BigDecimal budgetAmount = getCategoryBudgets(period);
+        BigDecimal spending = getCategorySpendingInPeriod(user, period);
+        return spending.compareTo(budgetAmount) > 0;
+    }
 
 }
