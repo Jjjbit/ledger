@@ -7,12 +7,9 @@ import java.math.RoundingMode;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "transfer")
+//@Table(name = "transfer")
+@DiscriminatorValue("TRANSFER")
 public class Transfer extends Transaction{
-
-    /*@ManyToOne
-    @JoinColumn(name = "toAccount_id")
-    private Account toAccount;*/
 
     public Transfer() {}
     public Transfer(LocalDate date,

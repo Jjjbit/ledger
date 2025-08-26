@@ -8,7 +8,8 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
-@Table(name = "expense")
+//@Table(name = "expense")
+@DiscriminatorValue("EXPENSE")
 public class Expense extends Transaction {
 
     public Expense() {}

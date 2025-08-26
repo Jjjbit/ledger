@@ -6,7 +6,9 @@ import java.math.BigDecimal;
 import java.time.LocalDate;
 
 @Entity
-@Inheritance(strategy = InheritanceType.JOINED)
+//@Inheritance(strategy = InheritanceType.JOINED)
+@Inheritance(strategy = InheritanceType.SINGLE_TABLE)
+@DiscriminatorColumn(name = "transaction_type")
 public abstract class Transaction {
     @Id
     @GeneratedValue(strategy = GenerationType.IDENTITY)
@@ -39,7 +41,7 @@ public abstract class Transaction {
     protected LedgerCategoryComponent category;
 
     @Enumerated(EnumType.STRING)
-    @Column(name = "transaction_type", nullable = false)
+    @Column(name = "transaction_type", nullable = false, insertable = false, updatable = false)
     protected TransactionType type;
 
     public Transaction() {}
@@ -47,8 +49,7 @@ public abstract class Transaction {
                        BigDecimal amount,
                        String description,
                        Account fromAccount,
-                          Account toAccount,
-                       //Account account,
+                       Account toAccount,
                        Ledger ledger,
                        LedgerCategoryComponent category,
                        TransactionType type) {
@@ -57,7 +58,6 @@ public abstract class Transaction {
         this.note = description;
         this.fromAccount = fromAccount;
         this.toAccount = toAccount;
-        //this.account = account;
         this.ledger = ledger;
         this.category = category;
         this.type = type;

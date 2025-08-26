@@ -9,7 +9,8 @@ import java.time.LocalDate;
 
 
 @Entity
-@Table(name = "income")
+//@Table(name = "income")
+@DiscriminatorValue("INCOME")
 public class Income extends Transaction {
     public  Income (LocalDate date,
                     BigDecimal amount,
