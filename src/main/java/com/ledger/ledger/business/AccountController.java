@@ -287,8 +287,6 @@ public class AccountController {
         }
 
         accountRepository.save(basicAccount);
-        //basicAccount.getOwner().updateTotalAssets();
-        //basicAccount.getOwner().updateNetAsset();
         userRepository.save(basicAccount.getOwner());
         return ResponseEntity.ok("Account edited successfully");
     }
@@ -445,7 +443,6 @@ public class AccountController {
         return ResponseEntity.ok("debit account");
     }
 
-    //TODO
     @PutMapping("{id}/repay-debt")
     @Transactional
     @PreAuthorize("hasRole('USER')")
