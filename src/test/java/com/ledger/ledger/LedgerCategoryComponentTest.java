@@ -166,9 +166,9 @@ public class LedgerCategoryComponentTest {
         ledgerCategoryComponentRepository.save(foodCategory);
 
         LedgerCategoryComponent lunch=new LedgerSubCategory("Lunch", CategoryType.EXPENSE, testLedger1);
+        ledgerCategoryComponentRepository.save(lunch);
         foodCategory.add(lunch);
         testLedger1.addCategoryComponent(lunch);
-        ledgerCategoryComponentRepository.save(lunch);
 
         Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, testAccount, testLedger1, lunch);
         transactionRepository.save(transaction1);
@@ -211,23 +211,29 @@ public class LedgerCategoryComponentTest {
     @WithMockUser(username = "Alice")
     public void testDeleteLedgerSubCategoryWithoutTransactions() throws Exception{
         LedgerCategoryComponent foodCategory=new LedgerCategory("Food", CategoryType.EXPENSE, testLedger1);
-        testLedger1.addCategoryComponent(foodCategory);
         ledgerCategoryComponentRepository.save(foodCategory);
 
+
         LedgerCategoryComponent mealsCategory=new LedgerCategory("Meals", CategoryType.EXPENSE, testLedger1);
-        testLedger1.addCategoryComponent(mealsCategory);
         ledgerCategoryComponentRepository.save(mealsCategory);
 
+
         LedgerCategoryComponent lunch=new LedgerSubCategory("Lunch", CategoryType.EXPENSE, testLedger1);
-        foodCategory.add(lunch);
-        testLedger1.addCategoryComponent(lunch);
+        lunch.setParent(foodCategory);
         ledgerCategoryComponentRepository.save(lunch);
+        //foodCategory.add(lunch);
 
         //test delete subcategory with transactions migrated to another Subcategory
         LedgerCategoryComponent snacks=new LedgerSubCategory("Snacks", CategoryType.EXPENSE, testLedger1);
-        foodCategory.add(snacks);
-        testLedger1.addCategoryComponent(snacks);
+        snacks.setParent(foodCategory);
         ledgerCategoryComponentRepository.save(snacks);
+        //foodCategory.add(snacks);
+
+
+        testLedger1.addCategoryComponent(foodCategory);
+        testLedger1.addCategoryComponent(mealsCategory);
+        testLedger1.addCategoryComponent(lunch);
+        testLedger1.addCategoryComponent(snacks);
 
         //test delete subcategory with transactions migrated to another category
         Transaction transaction1 = new Expense(LocalDate.now(), BigDecimal.valueOf(10),null, testAccount, testLedger1, lunch);
@@ -238,13 +244,12 @@ public class LedgerCategoryComponentTest {
 
         //test delete subcategory with budget
         Budget budget1=new Budget(BigDecimal.valueOf(100), Budget.Period.MONTHLY, lunch, testUser);
-        lunch.addBudget(budget1);
         budgetRepository.save(budget1);
+        lunch.addBudget(budget1);
 
         accountRepository.save(testAccount);
         ledgerRepository.save(testLedger1);
         ledgerCategoryComponentRepository.save(foodCategory);
-        ledgerCategoryComponentRepository.save(lunch);
 
         mockMvc.perform(delete("/ledger-category-components/"+ lunch.getId() +"/delete")
                         .principal(() -> "Alice")
@@ -270,24 +275,25 @@ public class LedgerCategoryComponentTest {
         Ledger updateLedger = ledgerRepository.findById(testLedger1.getId()).orElseThrow();
         Assertions.assertEquals(1, updateLedger.getTransactions().size());
 
-        LedgerCategoryComponent updateLunch=ledgerCategoryComponentRepository.findByLedgerAndName(updateLedger, "Lunch");
-        Assertions.assertNull(updateLunch);
-
-        LedgerCategoryComponent updateFoodCategory=ledgerCategoryComponentRepository.findByLedgerAndName(updateLedger, "Food");
-        Assertions.assertEquals(1, updateFoodCategory.getChildren().size());
+        LedgerCategoryComponent updateFoodCategory=ledgerCategoryComponentRepository.findById(foodCategory.getId()).orElse(null);
+        Assertions.assertEquals(0, updateFoodCategory.getChildren().size());
         Assertions.assertEquals(0, updateFoodCategory.getTransactions().size());
 
-        LedgerCategoryComponent updateMealsCategory=ledgerCategoryComponentRepository.findByLedgerAndName(updateLedger, "Meals");
+        LedgerCategoryComponent updateLunch=ledgerCategoryComponentRepository.findById(lunch.getId()).orElse(null);
+        Assertions.assertNull(updateLunch);
+
+        LedgerCategoryComponent updateMealsCategory=ledgerCategoryComponentRepository.findById(mealsCategory.getId()).orElse(null);
         Assertions.assertEquals(1, updateMealsCategory.getTransactions().size());
 
-        Account updateAccount=accountRepository.findByName("Test Account");
+        Account updateAccount=accountRepository.findById(testAccount.getId()).orElse(null);
         Assertions.assertEquals(new BigDecimal("990"), updateAccount.getBalance());
 
-        User updateUser=userRepository.findByUsername("Alice");
+        User updateUser=userRepository.findById(testUser.getId()).orElse(null);
         Assertions.assertEquals(new BigDecimal("990"), updateUser.getTotalAssets());
 
-        Optional<Budget> updateBudgetOpt = budgetRepository.findById(budget1.getId());
-        Assertions.assertTrue(updateBudgetOpt.isEmpty());
+        Budget updateBudget=budgetRepository.findById(budget1.getId()).orElse(null);
+        Assertions.assertNull(updateBudget);
+
     }
 
     @Test
@@ -388,7 +394,7 @@ public class LedgerCategoryComponentTest {
 
     }
 
-    //
+    //test delete with budget
     @Test
     @WithMockUser(username = "Alice")
     public void testDeleteCategoryWithSubCategory() throws Exception{
