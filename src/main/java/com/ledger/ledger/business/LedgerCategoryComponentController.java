@@ -1,10 +1,7 @@
 package com.ledger.ledger.business;
 
 import com.ledger.ledger.domain.*;
-import com.ledger.ledger.repository.LedgerCategoryComponentRepository;
-import com.ledger.ledger.repository.LedgerRepository;
-import com.ledger.ledger.repository.TransactionRepository;
-import com.ledger.ledger.repository.UserRepository;
+import com.ledger.ledger.repository.*;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -28,9 +25,11 @@ public class LedgerCategoryComponentController {
 
     @Autowired
     private LedgerRepository ledgerRepository;
-    private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
+
     @Autowired
     private TransactionRepository transactionRepository;
+    @Autowired
+    private BudgetRepository budgetRepository;
 
     @PostMapping("/ledgers/{ledgerId}/categories")
     @Transactional
@@ -133,6 +132,26 @@ public class LedgerCategoryComponentController {
         return ResponseEntity.ok("rename successfully");
     }
 
+    @PutMapping("/{id}/set-include-in-budget")
+    @Transactional
+    @PreAuthorize("hasRole('USER')")
+    public ResponseEntity<String> setIncludeInBudget(Principal principal,
+                                                     @PathVariable Long id,
+    @RequestParam boolean includeInBudget) {
+        User user = userRepository.findByUsername(principal.getName());
+        if (user == null) {
+            return ResponseEntity.status(HttpStatus.UNAUTHORIZED).body("User not found");
+        }
+
+        LedgerCategoryComponent categoryComponent = ledgerCategoryComponentRepository.findById(id)
+                .orElseThrow(() -> new IllegalArgumentException("Category Component not found"));
+
+        categoryComponent.setIncludedInBudget(includeInBudget);
+        ledgerCategoryComponentRepository.save(categoryComponent);
+        return ResponseEntity.ok("Include in budget set successfully");
+    }
+
+    //TODO testare se cancella bene le transazioni e i budget associati
     @DeleteMapping("/{id}/delete")
     @Transactional
     @PreAuthorize("hasRole('USER')")
@@ -150,6 +169,12 @@ public class LedgerCategoryComponentController {
 
         if (ledgerCategoryComponent instanceof LedgerCategory category && !category.getChildren().isEmpty()) {
             return ResponseEntity.badRequest().body("Cannot delete a category that has subcategories");
+        }
+
+        //cancella budgets associati a categorycomponent
+        List<Budget> budgetsToDelete = new ArrayList<>(ledgerCategoryComponent.getBudgets());
+        for (Budget b : budgetsToDelete) {
+            budgetRepository.delete(b);
         }
 
         if(!deleteTransactions){ //non cancella transazioni associate a categorycomponent
@@ -171,8 +196,7 @@ public class LedgerCategoryComponentController {
         }else{ //cancalla anche le transazioni
             List<Transaction> transactionsToDelete = new ArrayList<>(ledgerCategoryComponent.getTransactions());
             for (Transaction t : transactionsToDelete) {
-
-                Account account=t.getAccount();
+                Account account=t.getFromAccount();
                 account.getTransactions().remove(t);
                 if(t instanceof Income){
                     account.debit(t.getAmount());
@@ -180,25 +204,23 @@ public class LedgerCategoryComponentController {
                     account.credit(t.getAmount());
                 }
 
-                t.setAccount(null);
+                t.setFromAccount(null);
 
                 Ledger ledger=t.getLedger();
                 ledger.getTransactions().remove(t);
                 t.setLedger(null);
-
                 t.setCategory(null);
 
-                transactionRepository.save(t);
                 transactionRepository.delete(t);
             }
         }
         ledgerCategoryComponent.getTransactions().clear();
-        ledgerCategoryComponent.getBudgets().clear();
+
 
         if (ledgerCategoryComponent instanceof LedgerSubCategory) {
             LedgerCategoryComponent parent = ledgerCategoryComponent.getParent();
-            parent.remove(ledgerCategoryComponent);
-            ledgerCategoryComponent.setParent(null);
+            parent.remove(ledgerCategoryComponent); //rimuove da parente
+            ledgerCategoryComponent.setParent(null); //stacca da parente
             ledgerCategoryComponentRepository.save(parent);
         }
 
@@ -278,15 +300,19 @@ public class LedgerCategoryComponentController {
         if (!(category instanceof LedgerSubCategory)) {
             return ResponseEntity.badRequest().body("Must be a SubCategory");
         }
+        category.getParent().remove(category); //rimuove da parente
+        category.setParent(null); //stacca da parente
 
         String originalName = category.getName();
         category.setName(category.getName() + "_old_" + category.getId());
         ledgerCategoryComponentRepository.save(category);
 
+
         LedgerCategoryComponent newCategory = new LedgerCategory(originalName, category.getType(), category.getLedger());
         for (Transaction t : category.getTransactions()) {
             t.setCategory(newCategory);
             newCategory.addTransaction(t);
+            transactionRepository.save(t);
         }
 
         ledgerCategoryComponentRepository.delete(category);
