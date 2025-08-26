@@ -54,6 +54,8 @@ public class AccountTest {
     private User testUser;
     private LedgerCategoryComponent foodCategory;
     private LedgerCategoryComponent salaryCategory;
+    @Autowired
+    private BorrowingRepository borrowingRepository;
 
     @BeforeEach
     public void setUp() {
