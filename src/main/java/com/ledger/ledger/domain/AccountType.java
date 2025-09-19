@@ -11,8 +11,8 @@ public enum AccountType {
 
     //CREDIT
     CREDIT_CARD,
-    LOAN,
     OTHER_CREDIT,
+    LOAN,
 
 
     //RECHARGE
