@@ -37,6 +37,9 @@ public class InstallmentPlan {
     @JoinColumn(name = "linked_account_id")
     private Account linkedAccount;
 
+    @Column(name = "remaining_amount", precision = 15, scale = 2)
+    private BigDecimal remainingAmount;
+
     public InstallmentPlan() {}
     public InstallmentPlan(BigDecimal totalAmount,
                            int totalPeriods,
@@ -54,6 +57,21 @@ public class InstallmentPlan {
     public Long getId() {
         return id;
     }
+    public BigDecimal getTotalAmount() {
+        return totalAmount;
+    }
+    public int getTotalPeriods() {
+        return totalPeriods;
+    }
+    public BigDecimal getFeeRate() {
+        return feeRate;
+    }
+    public FeeStrategy getFeeStrategy() {
+        return feeStrategy;
+    }
+    public Account getLinkedAccount() {
+        return linkedAccount;
+    }
 
     public void setLinkedAccount(Account linkedAccount) {
         this.linkedAccount = linkedAccount;
@@ -61,6 +79,28 @@ public class InstallmentPlan {
     public int getPaidPeriods() {
         return paidPeriods;
     }
+    public BigDecimal getRemainingAmount() {
+        return remainingAmount;
+    }
+    public void setRemainingAmount(BigDecimal remainingAmount) {
+        this.remainingAmount = remainingAmount;
+    }
+    public void setPaidPeriods(int paidPeriods) {
+        this.paidPeriods = paidPeriods;
+    }
+    public void setTotalAmount(BigDecimal totalAmount) {
+        this.totalAmount = totalAmount;
+    }
+    public void setTotalPeriods(int totalPeriods) {
+        this.totalPeriods = totalPeriods;
+    }
+    public void setFeeRate(BigDecimal feeRate) {
+        this.feeRate = feeRate;
+    }
+    public void setFeeStrategy(FeeStrategy feeStrategy) {
+        this.feeStrategy = feeStrategy;
+    }
+
     public BigDecimal getMonthlyPayment(int period) {
         BigDecimal base = totalAmount.divide(BigDecimal.valueOf(totalPeriods), 2, RoundingMode.HALF_UP); //base amount per period
         BigDecimal fee = totalAmount.multiply(feeRate); //total fee for the installment
@@ -91,36 +131,28 @@ public class InstallmentPlan {
     }
 
     public void repayOnePeriod() {
-        if (paidPeriods < totalPeriods) {
-            BigDecimal amountToPay = getMonthlyPayment(paidPeriods + 1);
-            linkedAccount.debit(amountToPay); // Debit the amount from the linked account
-            paidPeriods++;
-        } else {
-            throw new IllegalStateException("All periods have already been paid.");
-        }
+        BigDecimal monthlyPayment = getMonthlyPayment(paidPeriods + 1);
+        remainingAmount = remainingAmount.subtract(monthlyPayment).setScale(2, RoundingMode.HALF_UP);
+        paidPeriods++;
     }
     public void repayPartial(BigDecimal amount) {
-        if (paidPeriods < totalPeriods) {
-            linkedAccount.debit(amount); // Debit the partial amount from the linked account
-            //how many monthly payments does this cover?
-            BigDecimal paidAmount = BigDecimal.ZERO;
-            int periods = 0;
-            for(int i = paidPeriods + 1; i <= totalPeriods; i++) {
-                BigDecimal monthlyRepayment = getMonthlyPayment(i);
-                if(paidAmount.add(monthlyRepayment).compareTo(amount) <= 0) {
-                    paidAmount = paidAmount.add(monthlyRepayment);
-                    periods++;
-                } else {
-                    break;
-                }
+        //how many monthly payments does this cover?
+        BigDecimal paidAmount = BigDecimal.ZERO;
+        int periods = 0;
+        for(int i = paidPeriods + 1; i <= totalPeriods; i++) {
+            BigDecimal monthlyRepayment = getMonthlyPayment(i);
+            if(paidAmount.add(monthlyRepayment).compareTo(amount) <= 0) {
+                paidAmount = paidAmount.add(monthlyRepayment);
+                periods++;
+            } else {
+                break;
             }
-            paidPeriods += periods;
-        } else {
-            throw new IllegalStateException("All periods have already been paid.");
         }
+        paidPeriods += periods;
+        remainingAmount=remainingAmount.subtract(amount).setScale(2, RoundingMode.HALF_UP);
     }
 
-    public BigDecimal getRemainingAmount() {
+    public BigDecimal getRemainingAmountWithRepaidPeriods() {
         BigDecimal total = BigDecimal.ZERO;
         for (int i = paidPeriods + 1; i <= totalPeriods; i++) {
             total = total.add(getMonthlyPayment(i));
